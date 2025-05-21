@@ -45,13 +45,13 @@
             0% { transform: translate(-50%, -50%) rotate(0deg); }
             100% { transform: translate(-50%, -50%) rotate(360deg); }
         }
-        #aiDescriptionPanel {
+        /* #aiDescriptionPanel {
             position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
             background-color: rgba(42, 50, 62, 0.9); color: white; padding: 15px; border-radius: 8px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 20; max-width: 90%; width: 500px;
             display: none;
         }
-        #aiDescriptionPanelContent { max-height: 200px; overflow-y: auto; font-size: 0.9rem; line-height: 1.4; }
+        #aiDescriptionPanelContent { max-height: 200px; overflow-y: auto; font-size: 0.9rem; line-height: 1.4; }*/
     </style>
 </head>
 <body class="bg-gray-900 text-white">
@@ -75,7 +75,7 @@
                     <option value="grayElevation">Gray Elev.</option>
                 </select>
             </div>
-            <button id="getAIDescriptionBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>✨ Describe</button>
+            <!--<button id="getAIDescriptionBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>✨ Describe</button> -->
             <button id="exportUnifiedBtn" class="bg-green-600 hover:bg-green-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>Export Visible (GLB)</button>
         </div>
 
@@ -91,11 +91,11 @@
                 <div id="statusMessage" class="absolute bottom-2 left-2 bg-gray-900 bg-opacity-75 text-xs p-2 rounded-md">
                     Please load DEM file(s). Click on terrain for coordinates.
                 </div>
-                <div id="aiDescriptionPanel">
+                <!--<div id="aiDescriptionPanel">
                     <button id="closeAIDescriptionBtn" class="absolute top-2 right-3 text-gray-300 hover:text-white text-xl font-bold">&times;</button>
                     <h3 class="text-lg font-semibold mb-2">AI Generated Terrain Description</h3>
                     <div id="aiDescriptionPanelContent">Loading description...</div>
-                </div>
+                </div>-->
             </main>
         </div>
     </div>

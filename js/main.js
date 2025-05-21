@@ -5,9 +5,9 @@
  */
 
 // --- Module Imports ---
-import * as THREE from 'three'; // Not strictly needed here if threeSceneManager handles all THREE access
+import * as THREE from 'three'; 
 import { state, resetFirstDemAbsoluteOrigin, clearLoadedDEMs } from './appState.js';
-import { MAX_POINTS_PER_CHUNK } from './constants.js'; // Example of using a constant
+import { MAX_POINTS_PER_CHUNK } from './constants.js'; 
 
 import { 
     uiElements, 
@@ -24,7 +24,6 @@ import {
 import { 
     parseASCIIGrid 
 } from './demParser.js';
-// Future: import { parseGeoTIFF } from './demParser.js';
 
 import { 
     processAndChunkDEM 
@@ -35,8 +34,8 @@ import {
     addMeshToScene, 
     removeMeshFromScene, 
     centerView,
-    getCamera, // For raycaster if needed directly, though encapsulated now
-    getScene   // For GLTFExporter if it needs the whole scene (though we pass specific objects)
+    getCamera, 
+    getScene   
 } from './threeSceneManager.js';
 
 import { 
@@ -44,8 +43,12 @@ import {
     updateAllDemMaterials 
 } from './materialManager.js';
 
+// ***** THIS IS THE CRUCIAL IMPORT *****
+import { createDefaultDemMaterial } from './shaderManager.js'; 
+// Make sure 'shaderManager.js' is in the same 'js/' folder and exports this function.
+
 import { 
-    exportIndividualDemGLB, // Already used by uiManager for individual buttons
+    exportIndividualDemGLB, 
     exportUnifiedVisibleDemsGLB 
 } from './exportManager.js';
 
@@ -61,10 +64,10 @@ import {
  */
 function initializeApp() {
     console.log("Initializing DEM Viewer Application...");
-    initDOMElements(); // Get references to all UI elements first
-    initScene(uiElements.canvasContainer); // Initialize the Three.js scene, needs the canvas container
-    setupEventListeners(); // Set up event listeners for UI controls
-    setDemControlsEnabled(false); // Initially disable controls that require a DEM
+    initDOMElements(); 
+    initScene(uiElements.canvasContainer); 
+    setupEventListeners(); 
+    setDemControlsEnabled(false); 
     setStatusMessage("Please load DEM file(s). Click on terrain for coordinates.");
     console.log("Application initialized.");
 }
@@ -77,7 +80,7 @@ function setupEventListeners() {
         uiElements.fileInput.addEventListener('change', handleFileLoad);
     }
     if (uiElements.centerViewBtn) {
-        uiElements.centerViewBtn.addEventListener('click', centerView); // Directly call from threeSceneManager
+        uiElements.centerViewBtn.addEventListener('click', centerView); 
     }
     if (uiElements.materialTypeSelect) {
         uiElements.materialTypeSelect.addEventListener('change', handleMaterialChange);
@@ -91,8 +94,6 @@ function setupEventListeners() {
     if (uiElements.exportUnifiedBtn) {
         uiElements.exportUnifiedBtn.addEventListener('click', handleExportUnified);
     }
-    // Note: Individual DEM export buttons are added dynamically by uiManager,
-    // and their click handlers are set up there.
 }
 
 /**
@@ -103,10 +104,8 @@ function setupEventListeners() {
  */
 async function handleFileLoad(event) {
     const files = event.target.files; 
-    if (!files || files.length === 0) return; // No files selected
+    if (!files || files.length === 0) return; 
     
-    // If this is the first load operation since the app started or since DEMs were cleared,
-    // reset the absolute origin reference.
     if (state.loadedDEMs.length === 0) { 
         resetFirstDemAbsoluteOrigin(); 
     }
@@ -116,27 +115,24 @@ async function handleFileLoad(event) {
     hideAIDescriptionPanel(); 
     
     let filesProcessedSuccessfully = 0;
-    for (const file of files) { // Process each selected file
-        if (!file.name.toLowerCase().endsWith('.asc')) { // Basic file type check
+    for (const file of files) { 
+        if (!file.name.toLowerCase().endsWith('.asc')) { 
             setStatusMessage(`Skipping non .asc file: ${file.name}`, true); 
             console.warn(`Skipping non .asc file: ${file.name}`); 
             continue;
         }
         try {
-            const fileContent = await file.text(); // Read file content as text
+            const fileContent = await file.text(); 
             
-            // 1. Parse the ASCII Grid data
             const parsedFullDem = parseASCIIGrid(fileContent, file.name);
             if (!parsedFullDem) {
                 setStatusMessage(`Failed to parse ${file.name}. Check console.`, true);
-                continue; // Skip to next file if parsing failed
+                continue; 
             }
 
-            // 2. Process and chunk the DEM if it's too large
             const demChunksToProcess = processAndChunkDEM(parsedFullDem, file.name);
             
             if (demChunksToProcess && demChunksToProcess.length > 0) {
-                // 3. For each chunk (or the single DEM if not split), create its 3D representation
                 for (const chunkData of demChunksToProcess) { 
                     createAndAddTerrainMesh(chunkData.name, chunkData.parsedData); 
                 }
@@ -144,26 +140,25 @@ async function handleFileLoad(event) {
             } else { 
                 setStatusMessage(`No processable chunks generated for ${file.name}. Check console.`, true); 
             }
-        } catch (error) { // Catch any errors during file reading or processing
+        } catch (error) { 
             console.error(`Error processing file ${file.name}:`, error);
-            setStatusMessage(`Error processing ${file.name}: ${error.message}`, true);
+            setStatusMessage(`Error processing file ${file.name}: ${error.message}`, true);
         }
     }
-    showLoader(false); // Hide loader after processing all files
+    showLoader(false); 
     
-    // Update status message and UI based on loading outcome
     if (state.loadedDEMs.length > 0) {
          setStatusMessage(`${state.loadedDEMs.length} DEM(s)/chunk(s) loaded. Click on terrain for coordinates.`); 
-         centerView(); // Center the view on the newly loaded DEMs
-         setDemControlsEnabled(true); // Enable relevant UI controls
+         centerView(); 
+         setDemControlsEnabled(true); 
     } else if (files.length > 0 && filesProcessedSuccessfully === 0) {
          setStatusMessage("No valid DEMs were loaded. Check files or console.", true);
          setDemControlsEnabled(false);
-    } else { // If no files were selected or processed
+    } else { 
          setStatusMessage("Please load DEM file(s). Click on terrain for coordinates."); 
          setDemControlsEnabled(false);
     }
-    if (uiElements.fileInput) uiElements.fileInput.value = ''; // Clear file input
+    if (uiElements.fileInput) uiElements.fileInput.value = ''; 
 }
 
 /**
@@ -182,7 +177,6 @@ function createAndAddTerrainMesh(fileName, parsedData) {
     const planeWidthForGeom = (ncols - 1) * cellsize; 
     const planeHeightForGeom = (nrows - 1) * cellsize;
     
-    // Calculate position relative to the first DEM's origin
     const relativeX = header.xllcorner - state.firstDemAbsoluteOrigin.x;
     const relativeY = header.yllcorner - state.firstDemAbsoluteOrigin.y;
     
@@ -195,7 +189,7 @@ function createAndAddTerrainMesh(fileName, parsedData) {
     for (let j = 0; j < nrows; j++) {
         for (let i = 0; i < ncols; i++) {
             const vertexIndex = i + j * ncols;
-            const demRow = j; // Assumes DEM data is ordered bottom-up (row 0 is southernmost)
+            const demRow = j; 
             const demCol = i; 
             let elevation = (data[demRow] && data[demRow][demCol] !== undefined) ? data[demRow][demCol] : nodata_value;
             if (elevation === undefined || elevation === null || isNaN(elevation) || elevation === nodata_value) elevation = minElev; 
@@ -208,28 +202,26 @@ function createAndAddTerrainMesh(fileName, parsedData) {
     const demEntry = {
         id: `dem-${state.fileIdCounter}`, 
         name: fileName,
-        mesh: new THREE.Mesh(geometry, createDefaultDemMaterial()), // Use function from materialManager
+        mesh: new THREE.Mesh(geometry, createDefaultDemMaterial()), // <<<< Function is called here
         demData: parsedData, 
-        materials: { default: null }, // Will be populated by materialManager
+        materials: { default: null }, 
         isVisible: true, 
         fileId: state.fileIdCounter
     };
-    demEntry.materials.default = demEntry.mesh.material; // Store the initial default material
+    demEntry.materials.default = demEntry.mesh.material; 
 
     demEntry.mesh.position.set(relativeX, relativeY, 0); 
-    addMeshToScene(demEntry.mesh); // From threeSceneManager
+    addMeshToScene(demEntry.mesh); 
     state.loadedDEMs.push(demEntry);
     
-    // Add to UI list, providing a callback for visibility toggle
     addDemToPanelList(demEntry, (demId, isVisible) => {
         const changedDem = state.loadedDEMs.find(d => d.id === demId);
         if (changedDem) {
             changedDem.isVisible = isVisible;
             changedDem.mesh.visible = isVisible;
-            // No recenter on visibility toggle
         }
     }); 
-    updateDemMaterial(demEntry, state.currentShadingMode); // Apply current global shading
+    updateDemMaterial(demEntry, state.currentShadingMode); 
 }
 
 /**
@@ -239,7 +231,7 @@ function createAndAddTerrainMesh(fileName, parsedData) {
 function handleMaterialChange() {
     if (uiElements.materialTypeSelect) {
         state.currentShadingMode = uiElements.materialTypeSelect.value;
-        updateAllDemMaterials(); // From materialManager
+        updateAllDemMaterials(); 
     }
 }
 
@@ -285,14 +277,11 @@ async function handleExportUnified() {
     setStatusMessage("Preparing unified export...");
     try {
         await exportUnifiedVisibleDemsGLB(setStatusMessage);
-        // Status message is updated within exportUnifiedVisibleDemsGLB via setStatusFn
     } catch (error) {
         console.error("Unified export error in main:", error);
         setStatusMessage("Error during unified export. See console.", true);
     }
 }
 
-
 // --- Application Initialization ---
-// Wait for the DOM to be fully loaded before initializing the app
 document.addEventListener('DOMContentLoaded', initializeApp);
