@@ -1,8 +1,5 @@
 // js/demProcessor.js
 import { MAX_POINTS_PER_CHUNK } from './constants.js';
-// Note: We might need UIManager for status updates if we move those calls here,
-// but for now, let's keep it focused on data processing. The caller (main.js) can handle UI updates.
-
 /**
  * @file Contains logic for processing parsed DEM data, primarily for splitting large DEMs into smaller chunks.
  */
