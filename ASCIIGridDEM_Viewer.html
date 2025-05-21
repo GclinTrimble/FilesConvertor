@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-DEM Viewer with Row Mapping Test</title>
+    <title>Multi-DEM Viewer with Enhanced Comments</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -110,81 +110,221 @@
     } </script>
 
     <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+        // --- Module Imports ---
+        import * as THREE from 'three'; // Core Three.js library
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js'; // Camera controls
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'; // For exporting to GLB format
 
-        let scene, camera, renderer, controls;
-        let directionalLight, ambientLight;
+        // --- Global Scene Variables ---
+        let scene, camera, renderer, controls; // Basic Three.js components
+        let directionalLight, ambientLight; // Lighting components
+        
+        // --- DEM Data Management ---
+        // Array to store information about each loaded DEM (or DEM chunk)
+        // Each entry is an object: { id, name, mesh, demData, materials, isVisible, fileId }
         let loadedDEMs = []; 
+        // Counter for generating unique IDs for DEM entries in the list panel
         let fileIdCounter = 0;
+        // Maximum number of points a DEM chunk can have before it's split into smaller pieces
         const MAX_POINTS_PER_CHUNK = 10_000_000;
-        let raycaster;
-        const pointer = new THREE.Vector2();
-        let lastMouseIntersectionPoint = null; 
+        
+        // --- Mouse Interaction Variables ---
+        let raycaster; // Used for detecting intersections between mouse clicks/moves and 3D objects
+        const pointer = new THREE.Vector2(); // Stores normalized mouse coordinates (x, y from -1 to 1)
+        let lastMouseIntersectionPoint = null; // Stores the 3D world coordinates of the last mouse intersection with a DEM surface
+        
+        // --- Positioning Reference ---
+        // Stores the absolute xllcorner and yllcorner of the very first DEM (or its first chunk) loaded.
+        // This is used as a reference origin to position all subsequent DEMs relatively.
         let firstDemAbsoluteOrigin = { x: null, y: null }; 
 
-
+        // --- UI Element References ---
+        // An object to hold references to frequently accessed HTML elements for cleaner code
         const ui = {
-            canvasContainer: document.getElementById('canvasContainer'),
-            fileInput: document.getElementById('fileInput'),
-            centerViewBtn: document.getElementById('centerViewBtn'),
-            materialTypeSelect: document.getElementById('materialType'),
-            statusMessage: document.getElementById('statusMessage'),
-            loader: document.getElementById('loader'),
-            getAIDescriptionBtn: document.getElementById('getAIDescriptionBtn'),
-            aiDescriptionPanel: document.getElementById('aiDescriptionPanel'),
-            aiDescriptionPanelContent: document.getElementById('aiDescriptionPanelContent'),
-            closeAIDescriptionBtn: document.getElementById('closeAIDescriptionBtn'),
-            demListUl: document.getElementById('demList'),
-            exportUnifiedBtn: document.getElementById('exportUnifiedBtn')
+            canvasContainer: document.getElementById('canvasContainer'), // Div where the 3D canvas is placed
+            fileInput: document.getElementById('fileInput'),             // File input for loading DEMs
+            centerViewBtn: document.getElementById('centerViewBtn'),     // Button to center the view
+            materialTypeSelect: document.getElementById('materialType'), // Dropdown for selecting shading type
+            statusMessage: document.getElementById('statusMessage'),     // Area to display messages to the user
+            loader: document.getElementById('loader'),                   // Loading spinner element
+            getAIDescriptionBtn: document.getElementById('getAIDescriptionBtn'), // Button to get AI terrain description
+            aiDescriptionPanel: document.getElementById('aiDescriptionPanel'),       // Panel for AI description
+            aiDescriptionPanelContent: document.getElementById('aiDescriptionPanelContent'), // Content area of AI panel
+            closeAIDescriptionBtn: document.getElementById('closeAIDescriptionBtn'), // Button to close AI panel
+            demListUl: document.getElementById('demList'),               // Unordered list for displaying loaded DEMs
+            exportUnifiedBtn: document.getElementById('exportUnifiedBtn') // Button to export all visible DEMs as one GLB
         };
 
-        const elevationVertexShader = `varying float vElevation; varying vec3 vNormal; void main() { vElevation = position.z; vNormal = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
-        const colorElevationFragmentShader = `varying float vElevation; varying vec3 vNormal; uniform float minElevation; uniform float maxElevation; uniform vec3 uDirectionalLightDirection; uniform vec3 uDirectionalLightColor; uniform vec3 uAmbientLightColor; vec3 colorRamp(float t) { vec3 c1=vec3(0.0,0.0,1.0); vec3 c2=vec3(0.0,1.0,0.0); vec3 c3=vec3(1.0,1.0,0.0); vec3 c4=vec3(1.0,0.0,0.0); if(t<0.0) t=0.0; if(t>1.0) t=1.0; if(t<0.33) return mix(c1,c2,t/0.33); if(t<0.66) return mix(c2,c3,(t-0.33)/0.33); return mix(c3,c4,(t-0.66)/0.34); } void main() { vec3 baseColor; if(maxElevation==minElevation){ baseColor=vec3(0.5,0.5,0.5); } else { baseColor=colorRamp((vElevation-minElevation)/(maxElevation-minElevation)); } vec3 norm=normalize(vNormal); float dotNL=max(dot(norm,normalize(uDirectionalLightDirection)),0.0); vec3 diffuse=uDirectionalLightColor*dotNL; vec3 finalColor=baseColor*(uAmbientLightColor+diffuse); gl_FragColor=vec4(finalColor,1.0); }`;
-        const grayElevationFragmentShader = `varying float vElevation; varying vec3 vNormal; uniform float minElevation; uniform float maxElevation; uniform vec3 uDirectionalLightDirection; uniform vec3 uDirectionalLightColor; uniform vec3 uAmbientLightColor; void main() { vec3 baseColor; if(maxElevation==minElevation){ baseColor=vec3(0.5,0.5,0.5); } else { float nE=(vElevation-minElevation)/(maxElevation-minElevation); nE=clamp(nE,0.0,1.0); baseColor=vec3(nE,nE,nE); } vec3 norm=normalize(vNormal); float dotNL=max(dot(norm,normalize(uDirectionalLightDirection)),0.0); vec3 diffuse=uDirectionalLightColor*dotNL; vec3 finalColor=baseColor*(uAmbientLightColor+diffuse); gl_FragColor=vec4(finalColor,1.0); }`;
-        let defaultMaterial;
+        // --- Shader Definitions (GLSL Code) ---
+        // Vertex shader: Executed for each vertex of the terrain mesh.
+        // - `vElevation`: Passes the original Z position (elevation) to the fragment shader.
+        // - `vNormal`: Calculates and passes the vertex normal in view space (camera's perspective) to the fragment shader.
+        //   Normals are crucial for lighting calculations.
+        // - `gl_Position`: The final transformed position of the vertex in clip space.
+        const elevationVertexShader = `
+            varying float vElevation; 
+            varying vec3 vNormal; 
+            void main() { 
+                vElevation = position.z; 
+                vNormal = normalize(normalMatrix * normal); 
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); 
+            }
+        `;
+
+        // Fragment shader for "Color by Elevation": Executed for each pixel (fragment) of the terrain.
+        // - `vElevation`, `vNormal`: Interpolated values from the vertex shader.
+        // - `minElevation`, `maxElevation`: Uniforms (global variables for the shader) passed from JavaScript,
+        //   representing the min/max elevation of the specific DEM for normalization.
+        // - `uDirectionalLightDirection`, `uDirectionalLightColor`, `uAmbientLightColor`: Uniforms for lighting.
+        // - `colorRamp()`: A helper function to map a normalized elevation value (0-1) to a color.
+        // - Calculates a base color from the elevation, then applies simple Lambertian diffuse lighting
+        //   and ambient lighting.
+        const colorElevationFragmentShader = `
+            varying float vElevation; 
+            varying vec3 vNormal; 
+            uniform float minElevation; 
+            uniform float maxElevation; 
+            uniform vec3 uDirectionalLightDirection; 
+            uniform vec3 uDirectionalLightColor; 
+            uniform vec3 uAmbientLightColor; 
+            vec3 colorRamp(float t) { 
+                vec3 c1=vec3(0.0,0.0,1.0); vec3 c2=vec3(0.0,1.0,0.0); 
+                vec3 c3=vec3(1.0,1.0,0.0); vec3 c4=vec3(1.0,0.0,0.0); 
+                if(t<0.0) t=0.0; if(t>1.0) t=1.0; 
+                if(t<0.33) return mix(c1,c2,t/0.33); 
+                if(t<0.66) return mix(c2,c3,(t-0.33)/0.33); 
+                return mix(c3,c4,(t-0.66)/0.34); 
+            } 
+            void main() { 
+                vec3 baseColor; 
+                if(maxElevation==minElevation){ baseColor=vec3(0.5,0.5,0.5); } 
+                else { baseColor=colorRamp((vElevation-minElevation)/(maxElevation-minElevation)); } 
+                vec3 norm=normalize(vNormal); 
+                float dotNL=max(dot(norm,normalize(uDirectionalLightDirection)),0.0); 
+                vec3 diffuse=uDirectionalLightColor*dotNL; 
+                vec3 finalColor=baseColor*(uAmbientLightColor+diffuse); 
+                gl_FragColor=vec4(finalColor,1.0); 
+            }
+        `;
+        
+        // Fragment shader for "Grayscale by Elevation": Similar to color, but maps elevation to a grayscale value.
+        const grayElevationFragmentShader = `
+            varying float vElevation; 
+            varying vec3 vNormal; 
+            uniform float minElevation; 
+            uniform float maxElevation; 
+            uniform vec3 uDirectionalLightDirection; 
+            uniform vec3 uDirectionalLightColor; 
+            uniform vec3 uAmbientLightColor; 
+            void main() { 
+                vec3 baseColor; 
+                if(maxElevation==minElevation){ baseColor=vec3(0.5,0.5,0.5); } 
+                else { 
+                    float nE=(vElevation-minElevation)/(maxElevation-minElevation); 
+                    nE=clamp(nE,0.0,1.0); 
+                    baseColor=vec3(nE,nE,nE); 
+                } 
+                vec3 norm=normalize(vNormal); 
+                float dotNL=max(dot(norm,normalize(uDirectionalLightDirection)),0.0); 
+                vec3 diffuse=uDirectionalLightColor*dotNL; 
+                vec3 finalColor=baseColor*(uAmbientLightColor+diffuse); 
+                gl_FragColor=vec4(finalColor,1.0); 
+            }
+        `;
+        
+        // --- Materials & Lighting Utilities ---
+        let defaultMaterial; // Instance of MeshStandardMaterial for default PBR shading
+        // Temporary vectors for lighting calculations to avoid re-creating them in the animation loop (performance).
         const lightWorldDirection = new THREE.Vector3();
         const viewSpaceLightDirection = new THREE.Vector3();
 
+        /**
+         * Initializes the core Three.js components: scene, camera, renderer, controls, and lighting.
+         * Also sets up essential event listeners for interactivity.
+         */
         function initThreeJS() {
-            scene = new THREE.Scene(); scene.background = new THREE.Color(0x2d3748);
-            camera = new THREE.PerspectiveCamera(75, ui.canvasContainer.clientWidth / ui.canvasContainer.clientHeight, 0.1, 100000);
-            camera.position.set(0, -200, 200); camera.up.set(0, 0, 1); 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            // Create the main scene container
+            scene = new THREE.Scene(); 
+            scene.background = new THREE.Color(0x2d3748); // Set a dark gray background color
+
+            // Set up the perspective camera
+            camera = new THREE.PerspectiveCamera(
+                75, // Field of View (degrees)
+                ui.canvasContainer.clientWidth / ui.canvasContainer.clientHeight, // Aspect ratio
+                0.1, // Near clipping plane
+                100000 // Far clipping plane (large enough for extensive terrains)
+            );
+            camera.position.set(0, -200, 200); // Initial camera position (looking somewhat down, Z-up)
+            camera.up.set(0, 0, 1); // IMPORTANT: Define Z-axis as "up" for the camera and OrbitControls
+
+            // Set up the WebGL renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true }); // antialias for smoother edges
             renderer.setSize(ui.canvasContainer.clientWidth, ui.canvasContainer.clientHeight);
-            ui.canvasContainer.appendChild(renderer.domElement);
+            ui.canvasContainer.appendChild(renderer.domElement); // Add the renderer's <canvas> to the HTML
+
+            // Set up OrbitControls for camera navigation
             controls = new OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true; controls.dampingFactor = 0.05;
-            controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI * 0.495; 
-            ambientLight = new THREE.AmbientLight(0xffffff, 0.7); scene.add(ambientLight);
-            directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(50, 50, 50); scene.add(directionalLight); 
+            controls.enableDamping = true; // Makes camera movement smoother (requires controls.update() in animate loop)
+            controls.dampingFactor = 0.05; // How much damping to apply
+            controls.minPolarAngle = 0; // Allow looking straight down (polar angle is angle from positive Z-axis)
+            controls.maxPolarAngle = Math.PI * 0.495; // Restrict looking too far up (prevents camera flipping under terrain)
+
+            // Add lighting
+            ambientLight = new THREE.AmbientLight(0xffffff, 0.7); // Soft white ambient light
+            scene.add(ambientLight);
+            directionalLight = new THREE.DirectionalLight(0xffffff, 0.8); // Brighter directional light
+            directionalLight.position.set(50, 50, 50); // Position of the light source
+            scene.add(directionalLight); 
+            
+            // Create the default material instance
             defaultMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc, flatShading: false });
+            
+            // Initialize the raycaster for mouse picking
             raycaster = new THREE.Raycaster();
-            renderer.domElement.addEventListener('click', onCanvasClick, false);
-            renderer.domElement.addEventListener('mousemove', onCanvasMouseMove, false);
-            renderer.domElement.addEventListener('mousedown', onCanvasMouseDown, false);
-            renderer.domElement.addEventListener('wheel', onCanvasWheel, { passive: false });
-            animate();
-            window.addEventListener('resize', onWindowResize, false);
-            setTimeout(onWindowResize, 0);
+
+            // Attach event listeners for interactivity
+            renderer.domElement.addEventListener('click', onCanvasClick, false);       // For coordinate display
+            renderer.domElement.addEventListener('mousemove', onCanvasMouseMove, false); // For cursor-centric navigation target
+            renderer.domElement.addEventListener('mousedown', onCanvasMouseDown, false); // To set OrbitControls target on interaction start
+            renderer.domElement.addEventListener('wheel', onCanvasWheel, { passive: false }); // For cursor-centric zoom
+
+            animate(); // Start the rendering loop
+            window.addEventListener('resize', onWindowResize, false); // Handle window resizing
+            setTimeout(onWindowResize, 0); // Call once at start to ensure correct initial sizing
         }
 
+        /**
+         * Handles window resize events. Updates the camera's aspect ratio and the renderer's size
+         * to match the new window dimensions, ensuring the scene scales correctly.
+         */
         function onWindowResize() {
-            if (!renderer || !camera || !ui.canvasContainer) return;
-            const newWidth = ui.canvasContainer.clientWidth; const newHeight = ui.canvasContainer.clientHeight;
-            if (newWidth > 0 && newHeight > 0) {
-                camera.aspect = newWidth / newHeight; camera.updateProjectionMatrix();
+            if (!renderer || !camera || !ui.canvasContainer) return; // Safety check
+            const newWidth = ui.canvasContainer.clientWidth; 
+            const newHeight = ui.canvasContainer.clientHeight;
+            if (newWidth > 0 && newHeight > 0) { // Ensure valid dimensions
+                camera.aspect = newWidth / newHeight;
+                camera.updateProjectionMatrix(); // Must be called after changing camera parameters
                 renderer.setSize(newWidth, newHeight);
             }
         }
 
+        /**
+         * The main animation/rendering loop. This function is called repeatedly (ideally 60 times per second).
+         * It's responsible for updating controls, transforming objects (if animated), and re-rendering the scene.
+         */
         function animate() {
-            requestAnimationFrame(animate); controls.update(); 
+            requestAnimationFrame(animate); // Schedules the next frame draw
+            controls.update(); // Required if enableDamping is true for OrbitControls
+
+            // Update the direction of the directional light for custom shaders
+            // This ensures lighting in custom shaders reacts correctly to camera movement.
             if (directionalLight && camera) {
-                directionalLight.getWorldDirection(lightWorldDirection); lightWorldDirection.negate();
+                directionalLight.getWorldDirection(lightWorldDirection); // Get light's direction in world space
+                lightWorldDirection.negate(); // In shaders, we usually want vector from surface TO light
+                // Transform light direction from world space to view (camera) space
                 viewSpaceLightDirection.copy(lightWorldDirection).transformDirection(camera.matrixWorldInverse).normalize();
+                
+                // Update the uniform for each DEM using a custom shader
                 loadedDEMs.forEach(dem => {
                     if (dem.isVisible && dem.mesh && dem.mesh.material instanceof THREE.ShaderMaterial) {
                         if (dem.mesh.material.uniforms.uDirectionalLightDirection) {
@@ -193,317 +333,672 @@
                     }
                 });
             }
-            renderer.render(scene, camera);
+            renderer.render(scene, camera); // Render the scene from the camera's perspective
         }
 
+        /**
+         * Updates the global 'pointer' Vector2 with normalized mouse coordinates.
+         * Normalized coordinates range from -1 to +1 for both X and Y.
+         * @param {MouseEvent} event - The mouse event (e.g., mousemove, click).
+         */
         function updatePointer(event) {
-            const rect = renderer.domElement.getBoundingClientRect();
+            const rect = renderer.domElement.getBoundingClientRect(); // Get canvas position and size
+            // Calculate normalized device coordinates (NDC)
             pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1; // Y is inverted in NDC
         }
 
+        /**
+         * Handles mouse move events on the 3D canvas.
+         * Performs raycasting to find the intersection point of the mouse cursor with visible DEMs.
+         * This intersection point is stored in 'lastMouseIntersectionPoint' for cursor-centric navigation.
+         * @param {MouseEvent} event - The mouse move event.
+         */
         function onCanvasMouseMove(event) {
-            updatePointer(event); raycaster.setFromCamera(pointer, camera);
+            updatePointer(event); // Get current normalized mouse position
+            raycaster.setFromCamera(pointer, camera); // Update the raycaster with the new mouse position
+
+            // Get a list of currently visible DEM meshes to check for intersections
             const visibleMeshes = loadedDEMs.filter(dem => dem.isVisible).map(dem => dem.mesh);
             if (visibleMeshes.length > 0) {
-                const intersects = raycaster.intersectObjects(visibleMeshes);
-                if (intersects.length > 0) {
+                const intersects = raycaster.intersectObjects(visibleMeshes); // Perform raycasting
+                if (intersects.length > 0) { // If the ray intersects one or more meshes
                     if (!lastMouseIntersectionPoint) lastMouseIntersectionPoint = new THREE.Vector3();
-                    lastMouseIntersectionPoint.copy(intersects[0].point);
+                    lastMouseIntersectionPoint.copy(intersects[0].point); // Store the closest intersection point
                 } 
+                // If not intersecting, lastMouseIntersectionPoint retains its last valid value.
+                // This prevents the OrbitControls target from jumping if the mouse briefly moves off terrain.
             }
         }
         
+        /**
+         * Handles mouse down events on the 3D canvas.
+         * If a valid intersection point exists under the cursor, it sets the OrbitControls target
+         * to this point. This makes rotations and pans center around where the user clicked.
+         * @param {MouseEvent} event - The mouse down event.
+         */
         function onCanvasMouseDown(event) {
             if (lastMouseIntersectionPoint && controls) {
+                // Check if the mouse button pressed is one that OrbitControls uses for its actions
                 if ( (event.button === controls.mouseButtons.LEFT && controls.enableRotate) ||
                      (event.button === controls.mouseButtons.MIDDLE && controls.enablePan) ||
                      (event.button === controls.mouseButtons.RIGHT && controls.enablePan) ) {
-                    controls.target.copy(lastMouseIntersectionPoint);
+                    controls.target.copy(lastMouseIntersectionPoint); // Set OrbitControls target
                 }
             }
         }
 
+        /**
+         * Handles mouse wheel (scroll) events on the 3D canvas.
+         * If a valid intersection point exists under the cursor, it sets the OrbitControls target
+         * to this point. This makes zooming focus on where the user is pointing.
+         * @param {WheelEvent} event - The mouse wheel event.
+         */
         function onCanvasWheel(event) {
             if (lastMouseIntersectionPoint && controls && controls.enableZoom) {
-                controls.target.copy(lastMouseIntersectionPoint);
+                controls.target.copy(lastMouseIntersectionPoint); // Set OrbitControls target for zoom
             }
         }
 
+        /**
+         * Handles click events on the 3D canvas (distinct from mousedown for navigation).
+         * Performs raycasting to get and display the X, Y, Z world coordinates of the clicked point on a DEM.
+         * @param {MouseEvent} event - The click event.
+         */
         function onCanvasClick(event) {
-            updatePointer(event); raycaster.setFromCamera(pointer, camera);
+            updatePointer(event); // Get current normalized mouse position
+            raycaster.setFromCamera(pointer, camera); // Update raycaster
+
             const visibleMeshes = loadedDEMs.filter(dem => dem.isVisible).map(dem => dem.mesh);
-            if (visibleMeshes.length === 0) return;
-            const intersects = raycaster.intersectObjects(visibleMeshes);
-            if (intersects.length > 0) {
-                const intersect = intersects[0]; const point = intersect.point;
+            if (visibleMeshes.length === 0) return; // No visible DEMs to click on
+
+            const intersects = raycaster.intersectObjects(visibleMeshes); // Perform raycasting
+            if (intersects.length > 0) { // If an intersection occurred
+                const intersect = intersects[0]; // Get the closest intersection
+                const point = intersect.point; // The 3D point of intersection in world coordinates
+                // Find the name of the DEM that was clicked
                 const demName = loadedDEMs.find(d => d.mesh === intersect.object)?.name || "Unknown DEM";
+                // Display the coordinates in the status message
                 ui.statusMessage.textContent = `Clicked on ${demName}: X: ${point.x.toFixed(2)}, Y: ${point.y.toFixed(2)}, Z (Elevation): ${point.z.toFixed(2)}`;
             } else {
                 ui.statusMessage.textContent = "No terrain clicked. Click on terrain for coordinates.";
             }
         }
         
+        /**
+         * Internal function to parse the full content of an ASCII Grid DEM file.
+         * Extracts header information (ncols, nrows, xllcorner, yllcorner, cellsize, nodata_value)
+         * and all elevation data points. Also calculates min/max elevation.
+         * @param {string} fileContent - The string content of the .asc file.
+         * @param {string} fileNameForLogging - The name of the file, used for logging messages.
+         * @returns {object|null} An object containing {header, data, minElev, maxElev} or null if parsing fails.
+         */
         function _parseFullASCIIGridData(fileContent, fileNameForLogging = "Unknown File") {
             try {
-                const lines = fileContent.split(/\r?\n/); const header = {}; let dataStartIndex = 0;
+                const lines = fileContent.split(/\r?\n/); // Split file into lines
+                const header = {}; 
+                let dataStartIndex = 0; // Index where the actual elevation data starts
                 const headerKeys = ["ncols", "nrows", "xllcorner", "yllcorner", "cellsize", "nodata_value"];
+
+                // Parse header lines
                 for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i].trim(); if (!line) continue;
-                    const parts = line.split(/\s+/);
-                    if (parts.length >= 2 && headerKeys.includes(parts[0].toLowerCase())) header[parts[0].toLowerCase()] = parseFloat(parts[1]);
-                    else if (Object.keys(header).length >= headerKeys.length-1 && parts.every(p => !isNaN(parseFloat(p)))) { dataStartIndex = i; break; }
-                    if (i > 10 && Object.keys(header).length < 4) throw new Error("Invalid DEM header format.");
+                    const line = lines[i].trim(); 
+                    if (!line) continue; // Skip empty lines
+                    const parts = line.split(/\s+/); // Split line by whitespace
+                    if (parts.length >= 2 && headerKeys.includes(parts[0].toLowerCase())) {
+                        header[parts[0].toLowerCase()] = parseFloat(parts[1]); // Store header key-value pair
+                    } else if (Object.keys(header).length >= headerKeys.length-1 && parts.every(p => !isNaN(parseFloat(p)))) {
+                        // If most header keys are found and current line looks like data (all numbers), assume data starts here
+                        dataStartIndex = i; 
+                        break; 
+                    }
+                    if (i > 10 && Object.keys(header).length < 4) { // Heuristic: if after 10 lines, not enough header info, assume invalid
+                        throw new Error("Invalid DEM header format (too few standard keys found early).");
+                    }
                 }
+
+                // Validate essential header fields
                 const requiredKeys = ["ncols", "nrows", "cellsize"];
-                for (const key of requiredKeys) if (typeof header[key] !== 'number' || isNaN(header[key])) throw new Error(`Missing/invalid: '${key}'.`);
+                for (const key of requiredKeys) {
+                    if (typeof header[key] !== 'number' || isNaN(header[key])) {
+                        throw new Error(`Missing or invalid required header field: '${key}'. Value found: '${header[key]}'.`);
+                    }
+                }
+                // Provide defaults for optional/often missing header fields
                 const geoKeys = ["xllcorner", "yllcorner", "nodata_value"];
                 const defaultGeoValues = { "xllcorner": 0, "yllcorner": 0, "nodata_value": -9999 };
-                for (const key of geoKeys) if (typeof header[key] !== 'number' || isNaN(header[key])) header[key] = defaultGeoValues[key];
-                const ncols = Math.floor(header.ncols); const nrows = Math.floor(header.nrows);
-                const nodata_value = header.nodata_value; const elevationData = [];
-                let minElev = Infinity; let maxElev = -Infinity; let validDataPoints = 0;
+                for (const key of geoKeys) {
+                    if (typeof header[key] !== 'number' || isNaN(header[key])) {
+                         if (header[key] !== undefined) console.warn(`[${fileNameForLogging}] Invalid value '${header[key]}' for '${key}'. Using default: ${defaultGeoValues[key]}.`);
+                         else console.log(`[${fileNameForLogging}] Missing '${key}'. Using default: ${defaultGeoValues[key]}.`);
+                        header[key] = defaultGeoValues[key];
+                    }
+                }
+                
+                const ncols = Math.floor(header.ncols); 
+                const nrows = Math.floor(header.nrows);
+                const nodata_value = header.nodata_value; 
+                const elevationData = []; // Array to store rows of elevation values
+                let minElev = Infinity; 
+                let maxElev = -Infinity; 
+                let validDataPoints = 0;
+
+                // Parse elevation data rows
                 for (let i = 0; i < nrows; i++) {
                     const line = lines[dataStartIndex + i];
-                    if (!line) { elevationData.push(new Array(ncols).fill(nodata_value)); continue; }
+                    if (!line) { // Handle missing data lines
+                        console.warn(`[${fileNameForLogging}] Missing data line for row ${i}. Filling with NODATA.`);
+                        elevationData.push(new Array(ncols).fill(nodata_value)); 
+                        continue; 
+                    }
                     const values = line.trim().split(/\s+/).map(parseFloat);
-                    const rowToAdd = new Array(ncols).fill(nodata_value);
+                    const rowToAdd = new Array(ncols).fill(nodata_value); // Initialize row with NODATA
+                    // Fill row, handling cases where line has fewer/more values than ncols
                     for(let k=0; k < Math.min(values.length, ncols); k++) rowToAdd[k] = values[k];
                     elevationData.push(rowToAdd);
-                    for (const val of rowToAdd) if (val !== nodata_value && !isNaN(val)) { if (val < minElev) minElev = val; if (val > maxElev) maxElev = val; validDataPoints++; }
+
+                    // Calculate min/max elevation for the dataset
+                    for (const val of rowToAdd) {
+                        if (val !== nodata_value && !isNaN(val)) {
+                            if (val < minElev) minElev = val;
+                            if (val > maxElev) maxElev = val;
+                            validDataPoints++;
+                        }
+                    }
                 }
-                if (validDataPoints === 0) { minElev = 0; maxElev = 0; }
+                // Handle cases with no valid data or all NODATA
+                if (validDataPoints === 0) { minElev = 0; maxElev = 0; console.warn(`[${fileNameForLogging}] No valid data points found.`); }
                 if (minElev === Infinity) minElev = nodata_value !== -Infinity ? nodata_value : 0;
                 if (maxElev === -Infinity) maxElev = nodata_value !== Infinity ? nodata_value : 0;
+                
+                console.log(`[${fileNameForLogging}] Parsed Full Header:`, JSON.stringify(header));
                 return { header, data: elevationData, minElev, maxElev };
-            } catch (error) { console.error(`Full Parse Error (${fileNameForLogging}):`, error); ui.statusMessage.textContent = `Parse Error for ${fileNameForLogging}: ${error.message}`; return null; }
+            } catch (error) { 
+                console.error(`Full Parse Error (${fileNameForLogging}):`, error); 
+                ui.statusMessage.textContent = `Parse Error for ${fileNameForLogging}: ${error.message}`; 
+                return null; 
+            }
         }
 
+        /**
+         * Controller function to parse an ASCII Grid DEM. If the DEM is too large (exceeds MAX_POINTS_PER_CHUNK),
+         * it splits the DEM into smaller, more manageable rectangular chunks.
+         * Each chunk gets its own derived header (ncols, nrows, xllcorner, yllcorner) and elevation data.
+         * @param {string} fileContent - The string content of the .asc file.
+         * @param {string} originalFileName - The original name of the file.
+         * @returns {Array<object>} An array of objects. Each object represents a DEM (or chunk)
+         * and contains {name: string, parsedData: object}. Returns empty array on failure.
+         */
         function parseAndSplitASCIIGridController(fileContent, originalFileName) {
             ui.statusMessage.textContent = `Processing ${originalFileName}...`;
-            const fullParsedData = _parseFullASCIIGridData(fileContent, originalFileName);
-            if (!fullParsedData) return [];
+            const fullParsedData = _parseFullASCIIGridData(fileContent, originalFileName); // Parse the entire file first
+            if (!fullParsedData) return []; 
+
             const { header: originalHeader, data: originalElevationData } = fullParsedData;
             const totalPoints = originalHeader.ncols * originalHeader.nrows;
+
+            // If DEM is within size limits, return it as a single "chunk"
             if (totalPoints <= MAX_POINTS_PER_CHUNK) {
+                console.log(`DEM ${originalFileName} is within size limit (${totalPoints} points). Not splitting.`);
                 return [{ name: originalFileName, parsedData: fullParsedData }];
             }
+
             console.log(`DEM ${originalFileName} is too large (${totalPoints} points). Splitting...`);
             ui.statusMessage.textContent = `Splitting ${originalFileName} (large file)...`;
-            const resultsArray = []; let numChunksX = 1; let numChunksY = 1;
+
+            const resultsArray = []; // To store data for each new chunk
+            let numChunksX = 1; // Number of chunks along the X-axis (columns)
+            let numChunksY = 1; // Number of chunks along the Y-axis (rows)
+
+            // Determine how many chunks are needed in X and Y directions to meet MAX_POINTS_PER_CHUNK
             while (true) {
                 const currentChunkCols = Math.ceil(originalHeader.ncols / numChunksX);
                 const currentChunkRows = Math.ceil(originalHeader.nrows / numChunksY);
-                if (currentChunkCols * currentChunkRows <= MAX_POINTS_PER_CHUNK) break;
+                if (currentChunkCols * currentChunkRows <= MAX_POINTS_PER_CHUNK) break; // Chunk size is acceptable
+                // Increment chunk count in the dimension that leads to squarer chunks (heuristic)
                 if (numChunksX * originalHeader.nrows > numChunksY * originalHeader.ncols) numChunksY++; else numChunksX++;
-                if (numChunksX > originalHeader.ncols && numChunksY > originalHeader.nrows) { return [{ name: originalFileName, parsedData: fullParsedData }]; }
+                // Safety break if splitting becomes excessively granular
+                if (numChunksX > originalHeader.ncols && numChunksY > originalHeader.nrows) { 
+                    console.error("Cannot split DEM further to meet point limit. This might happen if MAX_POINTS_PER_CHUNK is too small or DEM cellsize is huge relative to extent.");
+                    return [{ name: originalFileName, parsedData: fullParsedData }]; // Fallback to original if splitting fails
+                }
             }
             console.log(`Splitting ${originalFileName} into ${numChunksX}x${numChunksY} chunks.`);
             ui.statusMessage.textContent = `Splitting ${originalFileName} into ${numChunksX * numChunksY} chunks...`;
-            for (let cy = 0; cy < numChunksY; cy++) {
-                for (let cx = 0; cx < numChunksX; cx++) {
-                    const chunkName = `${originalFileName}_part${cy}_${cx}`;
+
+            // Iterate through each conceptual chunk grid cell
+            for (let cy = 0; cy < numChunksY; cy++) { // Chunk row index
+                for (let cx = 0; cx < numChunksX; cx++) { // Chunk column index
+                    const chunkName = `${originalFileName}_part${cy}_${cx}`; // e.g., mydem.asc_part0_0
+                    
+                    // Calculate row and column boundaries for the current chunk within the original DEM data
                     const startRowOrig = Math.floor(cy * originalHeader.nrows / numChunksY);
                     const endRowOrig = Math.floor((cy + 1) * originalHeader.nrows / numChunksY);
                     const chunkNRows = endRowOrig - startRowOrig;
+
                     const startColOrig = Math.floor(cx * originalHeader.ncols / numChunksX);
                     const endColOrig = Math.floor((cx + 1) * originalHeader.ncols / numChunksX);
                     const chunkNCols = endColOrig - startColOrig;
-                    if (chunkNCols <= 0 || chunkNRows <= 0) continue;
-                    const chunkHeader = { ...originalHeader };
-                    chunkHeader.ncols = chunkNCols; chunkHeader.nrows = chunkNRows;
+
+                    if (chunkNCols <= 0 || chunkNRows <= 0) continue; // Skip if chunk dimensions are invalid (e.g., due to rounding on last chunk)
+
+                    // Create a new header for this chunk
+                    const chunkHeader = { ...originalHeader }; // Start by copying the original header
+                    chunkHeader.ncols = chunkNCols;
+                    chunkHeader.nrows = chunkNRows;
+                    // Calculate xllcorner for the chunk based on its column position
                     chunkHeader.xllcorner = originalHeader.xllcorner + (startColOrig * originalHeader.cellsize);
-                    // Using USER-PROVIDED YLLCORNER FIX for split chunks
+                    // Calculate yllcorner for the chunk based on its row position (standard interpretation)
+                    // This assumes yllcorner is the bottom-left and rows are ordered top-to-bottom in the file.
                     chunkHeader.yllcorner = originalHeader.yllcorner + ((originalHeader.nrows - endRowOrig) * originalHeader.cellsize); 
-                    console.log(`[${chunkName}] YLLCorner Calc (USER): origYLL=${originalHeader.yllcorner}, origNRows=${originalHeader.nrows}, endRowOrig=${endRowOrig}, cellSize=${originalHeader.cellsize}, finalChunkYLL=${chunkHeader.yllcorner}`);
-                    const chunkElevationData = []; let chunkMinElev = Infinity; let chunkMaxElev = -Infinity; let chunkValidPoints = 0;
+                    console.log(`[${chunkName}] YLLCorner Calc (Standard): origYLL=${originalHeader.yllcorner}, origNRows=${originalHeader.nrows}, endRowOrig=${endRowOrig}, cellSize=${originalHeader.cellsize}, finalChunkYLL=${chunkHeader.yllcorner}`);
+
+                    const chunkElevationData = []; // To store elevation data for this chunk
+                    let chunkMinElev = Infinity;
+                    let chunkMaxElev = -Infinity;
+                    let chunkValidPoints = 0;
+
+                    // Extract elevation data for the current chunk from the original full dataset
                     for (let r = 0; r < chunkNRows; r++) {
                         const originalRowIndex = startRowOrig + r;
-                        if (originalRowIndex < 0 || originalRowIndex >= originalHeader.nrows) continue;
+                        // Safety check, though floor logic should prevent out-of-bounds
+                        if (originalRowIndex < 0 || originalRowIndex >= originalHeader.nrows) continue; 
+                        
                         const originalRowData = originalElevationData[originalRowIndex];
-                        const newRow = originalRowData.slice(startColOrig, endColOrig);
+                        const newRow = originalRowData.slice(startColOrig, endColOrig); // Extract columns for this chunk
                         chunkElevationData.push(newRow);
-                        for (const val of newRow) if (val !== chunkHeader.nodata_value && !isNaN(val)) { if (val < chunkMinElev) chunkMinElev = val; if (val > chunkMaxElev) chunkMaxElev = val; chunkValidPoints++; }
+
+                        // Calculate min/max elevation specifically for this chunk's data
+                        for (const val of newRow) {
+                            if (val !== chunkHeader.nodata_value && !isNaN(val)) {
+                                if (val < chunkMinElev) chunkMinElev = val;
+                                if (val > chunkMaxElev) chunkMaxElev = val;
+                                chunkValidPoints++;
+                            }
+                        }
                     }
+                    
+                    // Handle cases where the chunk might be all NODATA
                     if (chunkValidPoints === 0) { chunkMinElev = 0; chunkMaxElev = 0; }
                     if (chunkMinElev === Infinity) chunkMinElev = chunkHeader.nodata_value !== -Infinity ? chunkHeader.nodata_value : 0;
                     if (chunkMaxElev === -Infinity) chunkMaxElev = chunkHeader.nodata_value !== Infinity ? chunkHeader.nodata_value : 0;
-                    resultsArray.push({ name: chunkName, parsedData: { header: chunkHeader, data: chunkElevationData, minElev: chunkMinElev, maxElev: chunkMaxElev } });
+
+                    // Add the processed chunk data to the results array
+                    resultsArray.push({ 
+                        name: chunkName, 
+                        parsedData: { header: chunkHeader, data: chunkElevationData, minElev: chunkMinElev, maxElev: chunkMaxElev } 
+                    });
+                    console.log(`Created chunk: ${chunkName} (${chunkNCols}x${chunkNRows})`);
                 }
             }
             return resultsArray;
         }
 
+        /**
+         * Creates a 3D terrain mesh from parsed DEM data (or a chunk of it) and adds it to the scene.
+         * Also updates the UI list of loaded DEMs.
+         * @param {string} fileName - The name of the DEM (or chunk) to be displayed.
+         * @param {object} parsedData - The object containing {header, data, minElev, maxElev} for this terrain piece.
+         */
         function createAndAddTerrain(fileName, parsedData) {
             const { header, data, minElev, maxElev } = parsedData;
-            const ncols = Math.floor(header.ncols); const nrows = Math.floor(header.nrows);
-            const cellsize = header.cellsize; const nodata_value = header.nodata_value;
+            const ncols = Math.floor(header.ncols); 
+            const nrows = Math.floor(header.nrows);
+            const cellsize = header.cellsize; 
+            const nodata_value = header.nodata_value;
+            
+            // Calculate the physical width and height of the plane geometry based on cellsize and number of cells
             const planeWidthForGeom = (ncols - 1) * cellsize; 
             const planeHeightForGeom = (nrows - 1) * cellsize;
             
-            if (firstDemAbsoluteOrigin.x === null) { // Set origin based on the very first piece of DEM loaded
+            // Store the absolute origin (xllcorner, yllcorner) of the very first DEM/chunk loaded.
+            // This will serve as the reference point (0,0) in our logical scene space.
+            if (firstDemAbsoluteOrigin.x === null) { 
                 firstDemAbsoluteOrigin.x = header.xllcorner;
                 firstDemAbsoluteOrigin.y = header.yllcorner;
                 console.log(`[${fileName}] SETTING First DEM Absolute Origin: X=${firstDemAbsoluteOrigin.x}, Y=${firstDemAbsoluteOrigin.y}`);
             }
 
-            // Calculate position relative to the first DEM's origin
+            // Calculate the position of this DEM/chunk relative to the first DEM's origin.
+            // This allows multiple DEMs to be placed correctly next to each other.
             const relativeX = header.xllcorner - firstDemAbsoluteOrigin.x;
             const relativeY = header.yllcorner - firstDemAbsoluteOrigin.y;
             
             console.log(`[${fileName}] Creating Terrain Mesh. Abs xll=${header.xllcorner}, yll=${header.yllcorner}. Rel X=${relativeX}, Rel Y=${relativeY} for mesh center.`);
 
-            const geometry = new THREE.PlaneGeometry(planeWidthForGeom, planeHeightForGeom, Math.max(1, ncols - 1), Math.max(1, nrows - 1));
-            const positions = geometry.attributes.position;
+            // Create PlaneGeometry. Number of segments must be at least 1.
+            const geometry = new THREE.PlaneGeometry(
+                planeWidthForGeom, 
+                planeHeightForGeom, 
+                Math.max(1, ncols - 1), // Width segments
+                Math.max(1, nrows - 1)  // Height segments
+            );
+            const positions = geometry.attributes.position; // Get access to vertex positions
             
-            console.log(`[${fileName}] Applying DEM row mapping: demRow = j (was (nrows - 1) - j). This assumes DEM data rows are bottom-to-top.`);
-            for (let j = 0; j < nrows; j++) { // j is PlaneGeometry row (bottom-up)
-                for (let i = 0; i < ncols; i++) { // i is PlaneGeometry col (left-right)
-                    const vertexIndex = i + j * ncols;
-                    // MODIFIED ROW MAPPING:
-                    const demRow = j; // Assumes DEM data is ordered bottom-up (row 0 is southernmost)
-                    // const demRow = (nrows - 1) - j; // Standard: Assumes DEM data is top-down (row 0 is northernmost)
-                    const demCol = i; 
+            // Apply elevation data to the Z-coordinate of each vertex in the plane.
+            // The row mapping (how 'demRow' is calculated) determines the North/South orientation.
+            console.log(`[${fileName}] Applying DEM row mapping: demRow = j. This assumes DEM data rows in the file are ordered bottom-to-top (southernmost is row 0).`);
+            for (let j = 0; j < nrows; j++) { // 'j' iterates through rows of the PlaneGeometry (bottom-up)
+                for (let i = 0; i < ncols; i++) { // 'i' iterates through columns of the PlaneGeometry (left-to-right)
+                    const vertexIndex = i + j * ncols; // Calculate 1D index for the vertex
+                    
+                    // --- DEM Row Mapping ---
+                    // This is critical for correct orientation.
+                    // Option 1 (Current, based on user feedback for potential mirroring):
+                    // Assumes DEM data rows in the file are ordered from bottom (southernmost) to top (northernmost).
+                    // So, DEM row 'j' maps directly to PlaneGeometry row 'j'.
+                    const demRow = j; 
+                    
+                    // Option 2 (More "standard" for many DEMs, if Option 1 causes mirroring):
+                    // Assumes DEM data rows in the file are ordered from top (northernmost) to bottom (southernmost).
+                    // So, DEM row 0 (top) maps to the top of the plane, requiring inversion: (nrows - 1) - j.
+                    // const demRow = (nrows - 1) - j; 
+                    
+                    const demCol = i; // Column mapping is usually direct.
 
+                    // Get elevation value, defaulting to minElev for NODATA or undefined values
                     let elevation = (data[demRow] && data[demRow][demCol] !== undefined) ? data[demRow][demCol] : nodata_value;
-                    if (elevation === undefined || elevation === null || isNaN(elevation) || elevation === nodata_value) elevation = minElev; 
-                    if (positions.array.length > vertexIndex * 3 + 2) positions.setZ(vertexIndex, elevation);
+                    if (elevation === undefined || elevation === null || isNaN(elevation) || elevation === nodata_value) {
+                        elevation = minElev; 
+                    }
+                    // Set the Z-coordinate of the vertex
+                    if (positions.array.length > vertexIndex * 3 + 2) { // Ensure index is within bounds
+                        positions.setZ(vertexIndex, elevation);
+                    }
                 }
             }
-            geometry.computeVertexNormals();
-            const currentFileId = fileIdCounter++;
+            geometry.computeVertexNormals(); // Calculate normals for correct lighting
+
+            const currentFileId = fileIdCounter++; // Generate a unique ID for this DEM entry
             const demEntry = {
-                id: `dem-${currentFileId}`, name: fileName,
-                mesh: new THREE.Mesh(geometry, defaultMaterial), 
-                demData: parsedData, // Store original parsed data with its own absolute header
-                materials: { default: defaultMaterial }, 
-                isVisible: true, fileId: currentFileId
+                id: `dem-${currentFileId}`, 
+                name: fileName,
+                mesh: new THREE.Mesh(geometry, defaultMaterial), // Create the mesh with default material
+                demData: parsedData, // Store the original parsed data (header has absolute coords)
+                materials: { default: defaultMaterial }, // Store materials specific to this DEM
+                isVisible: true, 
+                fileId: currentFileId
             };
             
-            // Position the mesh's CENTER using the calculated relative coordinates
+            // Position the mesh's CENTER using the calculated relative coordinates.
+            // This means the (xllcorner, yllcorner) of the first DEM loaded effectively becomes (0,0) in the scene.
             demEntry.mesh.position.set(relativeX, relativeY, 0); 
             console.log(`[${fileName}] Mesh center (relative to first DEM) set to X: ${demEntry.mesh.position.x}, Y: ${demEntry.mesh.position.y}`);
 
-            scene.add(demEntry.mesh);
-            loadedDEMs.push(demEntry);
-            addDemToPanel(demEntry); 
-            updateDemMaterial(demEntry, ui.materialTypeSelect.value); 
-            ui.centerViewBtn.disabled = false; ui.materialTypeSelect.disabled = false; ui.getAIDescriptionBtn.disabled = false; ui.exportUnifiedBtn.disabled = false;
+            scene.add(demEntry.mesh); // Add the mesh to the Three.js scene
+            loadedDEMs.push(demEntry); // Add to our list of loaded DEMs
+            addDemToPanel(demEntry); // Add an entry to the UI list panel
+            updateDemMaterial(demEntry, ui.materialTypeSelect.value); // Apply the currently selected global shading
+            
+            // Enable UI controls now that at least one DEM is loaded
+            ui.centerViewBtn.disabled = false; 
+            ui.materialTypeSelect.disabled = false; 
+            ui.getAIDescriptionBtn.disabled = false; 
+            ui.exportUnifiedBtn.disabled = false;
         }
         
+        /**
+         * Adds a DEM entry to the side panel list in the UI.
+         * Includes the DEM name, a visibility checkbox, an export button, and its absolute origin coordinates.
+         * @param {object} demEntry - The DEM entry object containing its data and mesh.
+         */
         function addDemToPanel(demEntry) {
-            const li = document.createElement('li'); li.id = `item-${demEntry.id}`;
-            const headerDiv = document.createElement('div'); headerDiv.className = 'dem-item-header';
+            const li = document.createElement('li'); 
+            li.id = `item-${demEntry.id}`; // Unique ID for the list item
+            
+            const headerDiv = document.createElement('div'); 
+            headerDiv.className = 'dem-item-header'; // For styling the top part of the list item
+            
             const label = document.createElement('label'); 
-            label.setAttribute('for', `vis-${demEntry.id}`); label.textContent = demEntry.name; label.title = demEntry.name;
+            label.setAttribute('for', `vis-${demEntry.id}`); // Associate label with checkbox
+            label.textContent = demEntry.name; 
+            label.title = demEntry.name; // Show full name on hover if it's truncated
+            
             const checkbox = document.createElement('input'); 
-            checkbox.type = 'checkbox'; checkbox.id = `vis-${demEntry.id}`; checkbox.checked = demEntry.isVisible;
-            checkbox.addEventListener('change', (e) => { 
+            checkbox.type = 'checkbox'; 
+            checkbox.id = `vis-${demEntry.id}`; // Unique ID for checkbox
+            checkbox.checked = demEntry.isVisible; // Set initial checked state
+            checkbox.addEventListener('change', (e) => { // Event listener for visibility toggle
                 demEntry.isVisible = e.target.checked; 
-                demEntry.mesh.visible = demEntry.isVisible; 
-                // DO NOT recenter view on visibility toggle
+                demEntry.mesh.visible = demEntry.isVisible; // Show/hide the 3D mesh
+                // DO NOT recenter view on visibility toggle, as per user request.
             });
+            
             const exportButton = document.createElement('button');
             exportButton.textContent = 'GLB';
-            exportButton.className = 'export-btn-small';
+            exportButton.className = 'export-btn-small'; // For styling
             exportButton.title = 'Export this DEM as GLB';
-            exportButton.onclick = () => exportIndividualDemGLB(demEntry);
+            exportButton.onclick = () => exportIndividualDemGLB(demEntry); // Attach export function
 
+            // Assemble the header part of the list item
             headerDiv.appendChild(checkbox);
             headerDiv.appendChild(label);
             headerDiv.appendChild(exportButton);
             li.appendChild(headerDiv);
+            
+            // Add a div to display the absolute origin coordinates of this DEM/chunk
             const coordsDiv = document.createElement('div');
             coordsDiv.className = 'dem-item-coords';
-            // Displaying the original absolute xllcorner/yllcorner from the header of this specific DEM/chunk
+            // Display the original absolute xllcorner/yllcorner from this DEM/chunk's header
             coordsDiv.textContent = `Origin (abs): X: ${demEntry.demData.header.xllcorner.toFixed(2)}, Y: ${demEntry.demData.header.yllcorner.toFixed(2)}`;
             li.appendChild(coordsDiv);
-            ui.demListUl.appendChild(li);
+            
+            ui.demListUl.appendChild(li); // Add the new list item to the panel
         }
 
+        /**
+         * Updates the material of a specific DEM mesh based on the globally selected shading type.
+         * Creates new shader materials if they don't exist for this DEM yet, or updates existing ones.
+         * @param {object} demEntry - The DEM entry object.
+         * @param {string} materialType - The selected material type ('default', 'colorElevation', 'grayElevation').
+         */
         function updateDemMaterial(demEntry, materialType) {
-            const { minElev, maxElev } = demEntry.demData;
+            const { minElev, maxElev } = demEntry.demData; // Get min/max elevation for this specific DEM/chunk
+            // Calculate effective light colors (base color * intensity) for shaders
             const effectiveAmbientColor = new THREE.Color(ambientLight.color).multiplyScalar(ambientLight.intensity);
             const effectiveDirectionalColor = new THREE.Color(directionalLight.color).multiplyScalar(directionalLight.intensity);
+
             if (materialType === 'colorElevation') {
+                // If this DEM doesn't have its own colorElevation material yet, create it
                 if (!demEntry.materials.color) {
-                    demEntry.materials.color = new THREE.ShaderMaterial({ vertexShader: elevationVertexShader, fragmentShader: colorElevationFragmentShader, uniforms: { minElevation: { value: minElev }, maxElevation: { value: maxElev }, uDirectionalLightDirection: { value: new THREE.Vector3(0.5,0.5,1).normalize() }, uDirectionalLightColor: { value: effectiveDirectionalColor }, uAmbientLightColor: { value: effectiveAmbientColor } } });
-                } else { demEntry.materials.color.uniforms.minElevation.value = minElev; demEntry.materials.color.uniforms.maxElevation.value = maxElev; }
-                demEntry.mesh.material = demEntry.materials.color;
+                    demEntry.materials.color = new THREE.ShaderMaterial({ 
+                        vertexShader: elevationVertexShader, 
+                        fragmentShader: colorElevationFragmentShader, 
+                        uniforms: THREE.UniformsUtils.merge([ // Merge standard uniforms with custom ones
+                            THREE.UniformsLib.lights, // Includes necessary lighting uniforms if we were using Three's lighting system directly in shader
+                            { 
+                                minElevation: { value: minElev }, 
+                                maxElevation: { value: maxElev }, 
+                                uDirectionalLightDirection: { value: new THREE.Vector3(0.5,0.5,1).normalize() }, // Initial value, updated in animate
+                                uDirectionalLightColor: { value: effectiveDirectionalColor }, 
+                                uAmbientLightColor: { value: effectiveAmbientColor } 
+                            }
+                        ]),
+                        lights: true // Important: tells Three.js to provide lighting uniforms if merged from UniformsLib.lights
+                    });
+                } else { // If material exists, just update its min/max elevation uniforms
+                    demEntry.materials.color.uniforms.minElevation.value = minElev;
+                    demEntry.materials.color.uniforms.maxElevation.value = maxElev;
+                    // Light color uniforms might also need update if light properties change dynamically (not currently implemented)
+                    demEntry.materials.color.uniforms.uDirectionalLightColor.value.copy(effectiveDirectionalColor);
+                    demEntry.materials.color.uniforms.uAmbientLightColor.value.copy(effectiveAmbientColor);
+                }
+                demEntry.mesh.material = demEntry.materials.color; // Apply the material
             } else if (materialType === 'grayElevation') {
+                // Similar logic for grayscale elevation material
                 if (!demEntry.materials.gray) {
-                    demEntry.materials.gray = new THREE.ShaderMaterial({ vertexShader: elevationVertexShader, fragmentShader: grayElevationFragmentShader, uniforms: { minElevation: { value: minElev }, maxElevation: { value: maxElev }, uDirectionalLightDirection: { value: new THREE.Vector3(0.5,0.5,1).normalize() }, uDirectionalLightColor: { value: effectiveDirectionalColor }, uAmbientLightColor: { value: effectiveAmbientColor } } });
-                } else { demEntry.materials.gray.uniforms.minElevation.value = minElev; demEntry.materials.gray.uniforms.maxElevation.value = maxElev; }
+                    demEntry.materials.gray = new THREE.ShaderMaterial({ 
+                        vertexShader: elevationVertexShader, 
+                        fragmentShader: grayElevationFragmentShader, 
+                        uniforms: THREE.UniformsUtils.merge([
+                            THREE.UniformsLib.lights,
+                            { 
+                                minElevation: { value: minElev }, 
+                                maxElevation: { value: maxElev }, 
+                                uDirectionalLightDirection: { value: new THREE.Vector3(0.5,0.5,1).normalize() }, 
+                                uDirectionalLightColor: { value: effectiveDirectionalColor }, 
+                                uAmbientLightColor: { value: effectiveAmbientColor } 
+                            }
+                        ]),
+                        lights: true
+                    });
+                } else { 
+                    demEntry.materials.gray.uniforms.minElevation.value = minElev;
+                    demEntry.materials.gray.uniforms.maxElevation.value = maxElev;
+                    demEntry.materials.gray.uniforms.uDirectionalLightColor.value.copy(effectiveDirectionalColor);
+                    demEntry.materials.gray.uniforms.uAmbientLightColor.value.copy(effectiveAmbientColor);
+                }
                 demEntry.mesh.material = demEntry.materials.gray;
-            } else { demEntry.mesh.material = demEntry.materials.default; }
+            } else { // 'default' material
+                // The defaultMaterial is a shared MeshStandardMaterial instance.
+                // We can clone it if we need unique properties per DEM for default shading, but not currently needed.
+                demEntry.mesh.material = demEntry.materials.default; 
+            }
         }
         
-        function updateAllDemMaterials() { loadedDEMs.forEach(dem => { updateDemMaterial(dem, ui.materialTypeSelect.value); }); }
+        /**
+         * Applies the currently selected global shading type (from the dropdown) to all loaded DEMs.
+         */
+        function updateAllDemMaterials() { 
+            loadedDEMs.forEach(dem => { updateDemMaterial(dem, ui.materialTypeSelect.value); }); 
+        }
 
+        /**
+         * Centers the camera view to encompass all currently visible DEMs.
+         * It calculates a bounding box around all visible meshes and adjusts the camera
+         * position and target to frame them, maintaining the Z-up perspective.
+         */
         function centerView() {
             const visibleMeshes = loadedDEMs.filter(dem => dem.isVisible).map(dem => dem.mesh);
-            const targetPointForSync = new THREE.Vector3(); 
+            const targetPointForSync = new THREE.Vector3(); // Used to sync lastMouseIntersectionPoint
+
             if (visibleMeshes.length === 0) { 
-                camera.position.set(0, -200, 200); controls.target.set(0,0,0); targetPointForSync.set(0,0,0);
+                // Default view if no DEMs are visible
+                camera.position.set(0, -200, 200); // Reset to a Z-up friendly initial view
+                controls.target.set(0,0,0); 
+                targetPointForSync.set(0,0,0);
             } else {
                 const overallBoundingBox = new THREE.Box3();
                 visibleMeshes.forEach((mesh, index) => {
-                    mesh.updateMatrixWorld(); const meshBoundingBox = new THREE.Box3().setFromObject(mesh, true); 
-                    if (index === 0) overallBoundingBox.copy(meshBoundingBox); else overallBoundingBox.union(meshBoundingBox);
-                });
-                if (overallBoundingBox.isEmpty()) {
-                     camera.position.set(0, -200, 200); controls.target.set(0,0,0); targetPointForSync.set(0,0,0);
-                } else {
-                    const center = overallBoundingBox.getCenter(new THREE.Vector3()); 
-                    const size = overallBoundingBox.getSize(new THREE.Vector3());
-                    const maxDim = Math.max(size.x, size.y, size.z);
-                    if (maxDim === 0 || !isFinite(maxDim)) { 
-                        camera.position.set(0, -200, 200); controls.target.set(0,0,0); targetPointForSync.set(0,0,0);
+                    mesh.updateMatrixWorld(); // Ensure mesh's world matrix is up-to-date
+                    // Calculate bounding box in world coordinates
+                    const meshBoundingBox = new THREE.Box3().setFromObject(mesh, true); 
+                    if (index === 0) {
+                        overallBoundingBox.copy(meshBoundingBox); // Initialize with the first mesh's box
                     } else {
-                        const fov = camera.fov * (Math.PI / 180);
-                        const largerXYDim = Math.max(size.x, size.y);
-                        let cameraDistance = Math.abs(largerXYDim / 2 / Math.tan(fov / 2));
-                        cameraDistance = Math.max(cameraDistance, size.z); cameraDistance *= 1.5; 
+                        overallBoundingBox.union(meshBoundingBox); // Expand to include other meshes
+                    }
+                });
+
+                if (overallBoundingBox.isEmpty()) { // Should not happen if visibleMeshes is not empty
+                     camera.position.set(0, -200, 200); 
+                     controls.target.set(0,0,0); 
+                     targetPointForSync.set(0,0,0);
+                } else {
+                    const center = overallBoundingBox.getCenter(new THREE.Vector3()); // Center of the combined bounding box
+                    const size = overallBoundingBox.getSize(new THREE.Vector3());     // Dimensions of the combined box
+                    const maxDim = Math.max(size.x, size.y, size.z);                // Largest dimension
+
+                    if (maxDim === 0 || !isFinite(maxDim)) { // Handle edge cases (e.g., flat plane with no Z extent)
+                        camera.position.set(0, -200, 200); 
+                        controls.target.set(0,0,0); 
+                        targetPointForSync.set(0,0,0);
+                    } else {
+                        const fov = camera.fov * (Math.PI / 180); // Camera field of view in radians
+                        const largerXYDim = Math.max(size.x, size.y); // Consider the larger of X or Y extent for framing
+                        // Calculate camera distance needed to fit the content based on FOV
+                        let cameraDistance = Math.abs(largerXYDim / 2 / Math.tan(fov / 2)); 
+                        cameraDistance = Math.max(cameraDistance, size.z); // Ensure height is also visible
+                        cameraDistance *= 1.5; // Zoom out slightly for padding
+
+                        // Set camera position for an angled Z-up view, looking at the center
                         camera.position.set(center.x, center.y - cameraDistance * 0.707, center.z + cameraDistance * 0.707); 
-                        controls.target.copy(center); targetPointForSync.copy(center);
+                        controls.target.copy(center); // Set OrbitControls target to the center
+                        targetPointForSync.copy(center); // Sync this point for mouse interactions
                     }
                 }
             }
+            // Synchronize lastMouseIntersectionPoint to the new center to avoid view jump on the next interaction
             if (!lastMouseIntersectionPoint) lastMouseIntersectionPoint = new THREE.Vector3();
             lastMouseIntersectionPoint.copy(targetPointForSync);
         }
         
+        /**
+         * Fetches an AI-generated geographical description for the most recently loaded, currently visible DEM.
+         * Uses the Gemini API.
+         */
         async function getTerrainDescription() {
-            let targetDem = null; for (let i=loadedDEMs.length-1; i>=0; i--) if (loadedDEMs[i].isVisible) { targetDem=loadedDEMs[i]; break; }
-            if (!targetDem) { ui.aiDescriptionPanelContent.textContent="No visible DEM to describe."; ui.aiDescriptionPanel.style.display='block'; return; }
+            let targetDem = null; 
+            // Find the last loaded, currently visible DEM to describe
+            for (let i=loadedDEMs.length-1; i>=0; i--) {
+                if (loadedDEMs[i].isVisible) { 
+                    targetDem=loadedDEMs[i]; 
+                    break; 
+                }
+            }
+            if (!targetDem) { 
+                ui.aiDescriptionPanelContent.textContent="No visible DEM to describe."; 
+                ui.aiDescriptionPanel.style.display='block'; 
+                return; 
+            }
+            
+            // Show loading state in AI panel
             ui.aiDescriptionPanelContent.innerHTML = `<div class="flex items-center justify-center"><div class="loader-small border-t-purple-500" style="width:20px; height:20px; border-width:3px; animation: spin 1s linear infinite;"></div><span class="ml-2">Generating for ${targetDem.name}...</span></div>`;
-            ui.aiDescriptionPanel.style.display='block'; ui.getAIDescriptionBtn.disabled=true;
-            const { header, minElev, maxElev } = targetDem.demData; 
+            ui.aiDescriptionPanel.style.display='block'; 
+            ui.getAIDescriptionBtn.disabled=true; // Disable button during API call
+            
+            const { header, minElev, maxElev } = targetDem.demData; // Use original header of the DEM/chunk
+            // Construct the prompt for the Gemini API
             const prompt = `Describe this terrain: ${targetDem.name}, Columns: ${header.ncols}, Rows: ${header.nrows}, Cell Size: ${header.cellsize}, Min Elev: ${minElev.toFixed(2)}, Max Elev: ${maxElev.toFixed(2)}. Brief, geographical.`;
+            
             try {
-                let chatHistory = [{ role: "user", parts: [{ text: prompt }] }]; const payload = { contents: chatHistory }; const apiKey = "";
+                let chatHistory = [{ role: "user", parts: [{ text: prompt }] }]; 
+                const payload = { contents: chatHistory }; 
+                const apiKey = ""; // API key is automatically provided by the Canvas environment
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                
+                // Make the API call
                 const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                if (!response.ok) { const errorData = await response.json(); throw new Error(`API Error: ${errorData.error?.message || response.status}`); }
+                if (!response.ok) { // Handle API errors
+                    const errorData = await response.json(); 
+                    throw new Error(`API Error: ${errorData.error?.message || response.status}`); 
+                }
                 const result = await response.json();
-                if (result.candidates?.[0]?.content?.parts?.[0]?.text) ui.aiDescriptionPanelContent.textContent = result.candidates[0].content.parts[0].text;
-                else throw new Error("No valid content from API.");
-            } catch (error) { ui.aiDescriptionPanelContent.textContent = `Error: ${error.message}`; }
-            finally { ui.getAIDescriptionBtn.disabled = false; }
+                // Extract and display the generated text
+                if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                    ui.aiDescriptionPanelContent.textContent = result.candidates[0].content.parts[0].text;
+                } else {
+                    throw new Error("No valid content from API.");
+                }
+            } catch (error) { // Handle any errors during the process
+                ui.aiDescriptionPanelContent.textContent = `Error: ${error.message}`; 
+            }
+            finally { // Re-enable the button
+                ui.getAIDescriptionBtn.disabled = false; 
+            }
         }
 
+        /**
+         * Triggers a browser download for the given GLB data.
+         * @param {ArrayBuffer} glbData - The binary GLB data generated by GLTFExporter.
+         * @param {string} fileName - The desired filename for the downloaded .glb file.
+         */
         function triggerGLBDownload(glbData, fileName) {
-            const blob = new Blob([glbData], { type: 'application/octet-stream' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = fileName;
-            document.body.appendChild(link); 
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(link.href);
+            const blob = new Blob([glbData], { type: 'application/octet-stream' }); // Create a blob from the data
+            const link = document.createElement('a'); // Create a temporary anchor element
+            link.href = URL.createObjectURL(blob); // Set its href to a URL representing the blob
+            link.download = fileName; // Set the download attribute to the desired filename
+            document.body.appendChild(link); // Append to body (required for Firefox)
+            link.click(); // Programmatically click the link to trigger download
+            document.body.removeChild(link); // Clean up by removing the temporary link
+            URL.revokeObjectURL(link.href); // Release the object URL to free up resources
             ui.statusMessage.textContent = `Exported ${fileName}`;
         }
 
+        /**
+         * Exports an individual DEM entry (a single mesh) as a GLB file.
+         * @param {object} demEntry - The DEM entry object containing the mesh to export.
+         */
         function exportIndividualDemGLB(demEntry) {
             if (!demEntry || !demEntry.mesh) {
                 ui.statusMessage.textContent = "Error: DEM entry or mesh not found for export.";
@@ -511,17 +1006,23 @@
             }
             ui.statusMessage.textContent = `Exporting ${demEntry.name} as GLB...`;
             const exporter = new GLTFExporter();
+            // The mesh's position is already relative to the firstDemAbsoluteOrigin,
+            // so its world position will be correctly represented in the GLB if the GLB is placed at (0,0,0).
             exporter.parse(
-                demEntry.mesh,
-                (glb) => triggerGLBDownload(glb, `${demEntry.name.replace('.asc', '')}.glb`),
-                (error) => { 
+                demEntry.mesh, // Export the specific mesh
+                (glb) => triggerGLBDownload(glb, `${demEntry.name.replace('.asc', '')}.glb`), // Success callback
+                (error) => { // Error callback
                     console.error('Error exporting individual GLB:', error); 
                     ui.statusMessage.textContent = `Error exporting ${demEntry.name}. See console.`;
                 },
-                { binary: true }
+                { binary: true } // Export options: binary true for .glb format
             );
         }
 
+        /**
+         * Exports all currently visible DEMs as a single, unified GLB file.
+         * Meshes are cloned and added to a temporary group to maintain their relative world positions.
+         */
         function exportUnifiedVisibleDemsGLB() {
             const visibleDems = loadedDEMs.filter(dem => dem.isVisible);
             if (visibleDems.length === 0) {
@@ -529,66 +1030,97 @@
                 return;
             }
             ui.statusMessage.textContent = "Exporting unified GLB of visible DEMs...";
-            const group = new THREE.Group();
+            
+            const group = new THREE.Group(); // Create a temporary group to hold all meshes for export
             visibleDems.forEach(demEntry => {
-                const clone = demEntry.mesh.clone(); 
+                const clone = demEntry.mesh.clone(); // Clone mesh to avoid affecting the scene's original mesh
+                // The mesh's position is already relative to the firstDemAbsoluteOrigin.
+                // When these clones are added to a group at (0,0,0), their positions in the GLB
+                // will reflect their correct relative world positions.
                 group.add(clone); 
             });
 
             const exporter = new GLTFExporter();
             exporter.parse(
-                group,
-                (glb) => triggerGLBDownload(glb, 'unified_dems.glb'),
-                (error) => {
+                group, // Export the group containing all cloned visible DEMs
+                (glb) => triggerGLBDownload(glb, 'unified_dems.glb'), // Success callback
+                (error) => { // Error callback
                      console.error('Error exporting unified GLB:', error);
                      ui.statusMessage.textContent = "Error exporting unified GLB. See console.";
                 },
-                { binary: true }
+                { binary: true } // Export as binary GLB
             );
         }
 
+        // --- Event Listeners for Main UI Controls ---
 
+        // Handles the 'change' event on the file input element.
+        // Processes selected .asc files, parses them (splitting if necessary), and adds them to the scene.
         ui.fileInput.addEventListener('change', async (event) => {
-            const files = event.target.files; if (!files || files.length === 0) return;
-            if (loadedDEMs.length === 0) { firstDemAbsoluteOrigin.x = null; firstDemAbsoluteOrigin.y = null; }
-            ui.loader.style.display = 'block'; ui.statusMessage.textContent = `Loading ${files.length} file(s)...`;
-            ui.aiDescriptionPanel.style.display = 'none'; 
+            const files = event.target.files; 
+            if (!files || files.length === 0) return; // No files selected
+            
+            // If this is the first load operation (or all previous DEMs were cleared), 
+            // reset the absolute origin reference. This means the first of the *newly loaded* files
+            // will establish the new (0,0) for relative positioning.
+            if (loadedDEMs.length === 0) { 
+                firstDemAbsoluteOrigin.x = null; 
+                firstDemAbsoluteOrigin.y = null; 
+            }
+
+            ui.loader.style.display = 'block'; // Show loading spinner
+            ui.statusMessage.textContent = `Loading ${files.length} file(s)...`;
+            ui.aiDescriptionPanel.style.display = 'none'; // Hide AI panel during load
+            
             let filesProcessedSuccessfully = 0;
-            for (const file of files) {
-                if (!file.name.toLowerCase().endsWith('.asc')) {
-                    ui.statusMessage.textContent = `Skipping non .asc file: ${file.name}`; console.warn(`Skipping non .asc file: ${file.name}`); continue;
+            for (const file of files) { // Process each selected file
+                if (!file.name.toLowerCase().endsWith('.asc')) { // Skip non-.asc files
+                    ui.statusMessage.textContent = `Skipping non .asc file: ${file.name}`; 
+                    console.warn(`Skipping non .asc file: ${file.name}`); 
+                    continue;
                 }
                 try {
-                    const fileContent = await file.text();
+                    const fileContent = await file.text(); // Read file content as text
+                    // Parse the DEM content. This function also handles splitting if the DEM is too large.
                     const demChunksData = parseAndSplitASCIIGridController(fileContent, file.name); 
+                    
                     if (demChunksData && demChunksData.length > 0) {
-                        for (const chunk of demChunksData) { createAndAddTerrain(chunk.name, chunk.parsedData); }
+                        // For each chunk (or the single DEM if not split), create and add its terrain mesh
+                        for (const chunk of demChunksData) { 
+                            createAndAddTerrain(chunk.name, chunk.parsedData); 
+                        }
                         filesProcessedSuccessfully++;
-                    } else { ui.statusMessage.textContent = `Failed to process ${file.name}. Check console.`; }
-                } catch (error) {
+                    } else { 
+                        ui.statusMessage.textContent = `Failed to process ${file.name}. Check console.`; 
+                    }
+                } catch (error) { // Catch any errors during file reading or processing
                     console.error(`Error processing file ${file.name}:`, error);
                     ui.statusMessage.textContent = `Error processing ${file.name}: ${error.message}`;
                 }
             }
-            ui.loader.style.display = 'none';
+            ui.loader.style.display = 'none'; // Hide loader after processing all files
+            
+            // Update status message and center view if DEMs were successfully loaded
             if (loadedDEMs.length > 0) {
-                 ui.statusMessage.textContent = `${loadedDEMs.length} DEM(s)/chunk(s) loaded. Click on terrain for coordinates.`; centerView(); 
+                 ui.statusMessage.textContent = `${loadedDEMs.length} DEM(s)/chunk(s) loaded. Click on terrain for coordinates.`; 
+                 centerView(); // Center the view on the newly loaded DEMs
             } else if (files.length > 0 && filesProcessedSuccessfully === 0) {
                  ui.statusMessage.textContent = "No valid DEMs were loaded. Check files or console.";
-            } else {
+            } else { // If no files were selected or processed
                  ui.statusMessage.textContent = "Please load DEM file(s). Click on terrain for coordinates."; 
             }
-            ui.fileInput.value = ''; 
+            ui.fileInput.value = ''; // Clear file input to allow selecting the same file again if needed
         });
 
+        // Attach event listeners to other UI buttons
         ui.centerViewBtn.addEventListener('click', centerView);
         ui.materialTypeSelect.addEventListener('change', updateAllDemMaterials);
         ui.getAIDescriptionBtn.addEventListener('click', getTerrainDescription);
         ui.closeAIDescriptionBtn.addEventListener('click', () => { ui.aiDescriptionPanel.style.display = 'none'; });
         ui.exportUnifiedBtn.addEventListener('click', exportUnifiedVisibleDemsGLB);
 
-
-        initThreeJS();
+        // --- Application Initialization ---
+        initThreeJS(); // Call the main initialization function to set up the 3D environment
     </script>
 </body>
 </html>
