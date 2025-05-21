@@ -9,7 +9,7 @@ export const MAX_POINTS_PER_CHUNK = 10_000_000;
 /**
  * Default NODATA value commonly used in ASCII Grid DEMs if not specified in the header.
  */
-export const DEFAULT_NODATA_VALUE = -9999;
+export const DEFAULT_NODATA_VALUE = -99;
 
 /**
  * Default XLLCORNER value if not specified in the header.
