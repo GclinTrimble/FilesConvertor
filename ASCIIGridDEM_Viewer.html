@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-DEM Viewer with Click-to-Query & Enhanced Panel</title>
+    <title>Multi-DEM Viewer with Row Mapping Test</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -19,18 +19,23 @@
     <style>
         body { margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; }
         #mainContainer { display: flex; height: calc(100vh - 4rem - 3.5rem); }
-        #demListPanel { width: 280px; /* Slightly wider for coordinates */ background-color: #374151; padding: 10px; overflow-y: auto; border-right: 1px solid #4b5563; }
+        #demListPanel { width: 300px; background-color: #374151; padding: 10px; overflow-y: auto; border-right: 1px solid #4b5563; }
         #demListPanel h3 { font-size: 1.1rem; font-semibold; margin-bottom: 10px; color: white; }
         #demListPanel ul { list-style: none; padding: 0; }
         #demListPanel li { background-color: #4b5563; margin-bottom: 8px; padding: 8px; border-radius: 4px; }
         #demListPanel .dem-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;}
         #demListPanel li label { color: white; font-size: 0.875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 5px; flex-grow: 1;}
-        #demListPanel li input[type="checkbox"] { accent-color: #3b82f6; width: 1rem; height: 1rem; flex-shrink: 0; }
-        #demListPanel .dem-item-coords { font-size: 0.75rem; color: #d1d5db; /* gray-300 */ padding-left: 2px; }
+        #demListPanel li input[type="checkbox"] { accent-color: #3b82f6; width: 1rem; height: 1rem; flex-shrink: 0; margin-right: 8px; }
+        #demListPanel .dem-item-coords { font-size: 0.75rem; color: #d1d5db; padding-left: 2px; margin-bottom: 4px; }
+        #demListPanel .export-btn-small {
+            background-color: #4f46e5; color: white; font-size: 0.7rem; padding: 2px 6px;
+            border-radius: 3px; border: none; cursor: pointer; margin-left: auto;
+        }
+        #demListPanel .export-btn-small:hover { background-color: #4338ca; }
 
 
         #canvasContainer { flex-grow: 1; height: 100%; position: relative; }
-        canvas { display: block; cursor: crosshair; } /* Change cursor for clickable area */
+        canvas { display: block; cursor: crosshair; }
         .loader {
             border: 8px solid #f3f3f3; border-top: 8px solid #3498db; border-radius: 50%;
             width: 60px; height: 60px; animation: spin 1s linear infinite;
@@ -57,21 +62,22 @@
             <h1 class="text-xl font-semibold text-center">Multi-DEM Viewer</h1>
         </header>
 
-        <div class="bg-gray-700 p-3 shadow-md flex flex-wrap items-center justify-center gap-3 h-[3.5rem]">
+        <div class="bg-gray-700 p-3 shadow-md flex flex-wrap items-center justify-center gap-2 md:gap-3 h-[3.5rem]">
             <div>
-                <label for="fileInput" class="text-sm font-medium mr-2">Load DEM(s) (.asc):</label>
+                <label for="fileInput" class="text-sm font-medium mr-2">Load DEM(s):</label>
                 <input type="file" id="fileInput" accept=".asc" multiple class="text-sm text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border file:border-gray-500 file:text-sm file:font-semibold file:bg-gray-600 file:text-gray-200 hover:file:bg-gray-500 rounded-md">
             </div>
             <button id="centerViewBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>Center View</button>
             <div>
-                <label for="materialType" class="text-sm font-medium mr-2">Shading:</label>
+                <label for="materialType" class="text-sm font-medium mr-1">Shading:</label>
                 <select id="materialType" class="bg-gray-600 border border-gray-500 text-white text-sm rounded-md p-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50" disabled>
-                    <option value="default">Default (with Lighting)</option>
-                    <option value="colorElevation">Color by Elevation (with Lighting)</option>
-                    <option value="grayElevation">Grayscale by Elevation (with Lighting)</option>
+                    <option value="default">Default</option>
+                    <option value="colorElevation">Color Elev.</option>
+                    <option value="grayElevation">Gray Elev.</option>
                 </select>
             </div>
-            <button id="getAIDescriptionBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>✨ Get Terrain Description</button>
+            <button id="getAIDescriptionBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>✨ Describe</button>
+            <button id="exportUnifiedBtn" class="bg-green-600 hover:bg-green-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>Export Visible (GLB)</button>
         </div>
 
         <div id="mainContainer">
@@ -95,11 +101,18 @@
         </div>
     </div>
 
-    <script type="importmap"> { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } } </script>
+    <script type="importmap"> { 
+        "imports": { 
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", 
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+            "three/addons/exporters/GLTFExporter.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/exporters/GLTFExporter.js"
+        } 
+    } </script>
 
     <script type="module">
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
         let scene, camera, renderer, controls;
         let directionalLight, ambientLight;
@@ -108,6 +121,8 @@
         const MAX_POINTS_PER_CHUNK = 10_000_000;
         let raycaster;
         const pointer = new THREE.Vector2();
+        let lastMouseIntersectionPoint = null; 
+        let firstDemAbsoluteOrigin = { x: null, y: null }; 
 
 
         const ui = {
@@ -121,7 +136,8 @@
             aiDescriptionPanel: document.getElementById('aiDescriptionPanel'),
             aiDescriptionPanelContent: document.getElementById('aiDescriptionPanelContent'),
             closeAIDescriptionBtn: document.getElementById('closeAIDescriptionBtn'),
-            demListUl: document.getElementById('demList')
+            demListUl: document.getElementById('demList'),
+            exportUnifiedBtn: document.getElementById('exportUnifiedBtn')
         };
 
         const elevationVertexShader = `varying float vElevation; varying vec3 vNormal; void main() { vElevation = position.z; vNormal = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
@@ -134,20 +150,22 @@
         function initThreeJS() {
             scene = new THREE.Scene(); scene.background = new THREE.Color(0x2d3748);
             camera = new THREE.PerspectiveCamera(75, ui.canvasContainer.clientWidth / ui.canvasContainer.clientHeight, 0.1, 100000);
-            camera.position.set(0, 0, 100);
+            camera.position.set(0, -200, 200); camera.up.set(0, 0, 1); 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(ui.canvasContainer.clientWidth, ui.canvasContainer.clientHeight);
             ui.canvasContainer.appendChild(renderer.domElement);
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true; controls.dampingFactor = 0.05;
+            controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI * 0.495; 
             ambientLight = new THREE.AmbientLight(0xffffff, 0.7); scene.add(ambientLight);
             directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(50, 50, 50); scene.add(directionalLight);
+            directionalLight.position.set(50, 50, 50); scene.add(directionalLight); 
             defaultMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc, flatShading: false });
-            
             raycaster = new THREE.Raycaster();
             renderer.domElement.addEventListener('click', onCanvasClick, false);
-
+            renderer.domElement.addEventListener('mousemove', onCanvasMouseMove, false);
+            renderer.domElement.addEventListener('mousedown', onCanvasMouseDown, false);
+            renderer.domElement.addEventListener('wheel', onCanvasWheel, { passive: false });
             animate();
             window.addEventListener('resize', onWindowResize, false);
             setTimeout(onWindowResize, 0);
@@ -163,7 +181,7 @@
         }
 
         function animate() {
-            requestAnimationFrame(animate); controls.update();
+            requestAnimationFrame(animate); controls.update(); 
             if (directionalLight && camera) {
                 directionalLight.getWorldDirection(lightWorldDirection); lightWorldDirection.negate();
                 viewSpaceLightDirection.copy(lightWorldDirection).transformDirection(camera.matrixWorldInverse).normalize();
@@ -178,22 +196,47 @@
             renderer.render(scene, camera);
         }
 
-        function onCanvasClick(event) {
-            // Calculate pointer position in normalized device coordinates (-1 to +1) for both components
+        function updatePointer(event) {
             const rect = renderer.domElement.getBoundingClientRect();
             pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        }
 
-            raycaster.setFromCamera(pointer, camera);
+        function onCanvasMouseMove(event) {
+            updatePointer(event); raycaster.setFromCamera(pointer, camera);
+            const visibleMeshes = loadedDEMs.filter(dem => dem.isVisible).map(dem => dem.mesh);
+            if (visibleMeshes.length > 0) {
+                const intersects = raycaster.intersectObjects(visibleMeshes);
+                if (intersects.length > 0) {
+                    if (!lastMouseIntersectionPoint) lastMouseIntersectionPoint = new THREE.Vector3();
+                    lastMouseIntersectionPoint.copy(intersects[0].point);
+                } 
+            }
+        }
+        
+        function onCanvasMouseDown(event) {
+            if (lastMouseIntersectionPoint && controls) {
+                if ( (event.button === controls.mouseButtons.LEFT && controls.enableRotate) ||
+                     (event.button === controls.mouseButtons.MIDDLE && controls.enablePan) ||
+                     (event.button === controls.mouseButtons.RIGHT && controls.enablePan) ) {
+                    controls.target.copy(lastMouseIntersectionPoint);
+                }
+            }
+        }
 
+        function onCanvasWheel(event) {
+            if (lastMouseIntersectionPoint && controls && controls.enableZoom) {
+                controls.target.copy(lastMouseIntersectionPoint);
+            }
+        }
+
+        function onCanvasClick(event) {
+            updatePointer(event); raycaster.setFromCamera(pointer, camera);
             const visibleMeshes = loadedDEMs.filter(dem => dem.isVisible).map(dem => dem.mesh);
             if (visibleMeshes.length === 0) return;
-
             const intersects = raycaster.intersectObjects(visibleMeshes);
-
             if (intersects.length > 0) {
-                const intersect = intersects[0]; // Closest intersection
-                const point = intersect.point;
+                const intersect = intersects[0]; const point = intersect.point;
                 const demName = loadedDEMs.find(d => d.mesh === intersect.object)?.name || "Unknown DEM";
                 ui.statusMessage.textContent = `Clicked on ${demName}: X: ${point.x.toFixed(2)}, Y: ${point.y.toFixed(2)}, Z (Elevation): ${point.z.toFixed(2)}`;
             } else {
@@ -270,7 +313,9 @@
                     const chunkHeader = { ...originalHeader };
                     chunkHeader.ncols = chunkNCols; chunkHeader.nrows = chunkNRows;
                     chunkHeader.xllcorner = originalHeader.xllcorner + (startColOrig * originalHeader.cellsize);
-                    chunkHeader.yllcorner = originalHeader.yllcorner + ((originalHeader.nrows + endRowOrig) * originalHeader.cellsize);
+                    // Using USER-PROVIDED YLLCORNER FIX for split chunks
+                    chunkHeader.yllcorner = originalHeader.yllcorner + ((originalHeader.nrows - endRowOrig) * originalHeader.cellsize); 
+                    console.log(`[${chunkName}] YLLCorner Calc (USER): origYLL=${originalHeader.yllcorner}, origNRows=${originalHeader.nrows}, endRowOrig=${endRowOrig}, cellSize=${originalHeader.cellsize}, finalChunkYLL=${chunkHeader.yllcorner}`);
                     const chunkElevationData = []; let chunkMinElev = Infinity; let chunkMaxElev = -Infinity; let chunkValidPoints = 0;
                     for (let r = 0; r < chunkNRows; r++) {
                         const originalRowIndex = startRowOrig + r;
@@ -295,11 +340,31 @@
             const cellsize = header.cellsize; const nodata_value = header.nodata_value;
             const planeWidthForGeom = (ncols - 1) * cellsize; 
             const planeHeightForGeom = (nrows - 1) * cellsize;
+            
+            if (firstDemAbsoluteOrigin.x === null) { // Set origin based on the very first piece of DEM loaded
+                firstDemAbsoluteOrigin.x = header.xllcorner;
+                firstDemAbsoluteOrigin.y = header.yllcorner;
+                console.log(`[${fileName}] SETTING First DEM Absolute Origin: X=${firstDemAbsoluteOrigin.x}, Y=${firstDemAbsoluteOrigin.y}`);
+            }
+
+            // Calculate position relative to the first DEM's origin
+            const relativeX = header.xllcorner - firstDemAbsoluteOrigin.x;
+            const relativeY = header.yllcorner - firstDemAbsoluteOrigin.y;
+            
+            console.log(`[${fileName}] Creating Terrain Mesh. Abs xll=${header.xllcorner}, yll=${header.yllcorner}. Rel X=${relativeX}, Rel Y=${relativeY} for mesh center.`);
+
             const geometry = new THREE.PlaneGeometry(planeWidthForGeom, planeHeightForGeom, Math.max(1, ncols - 1), Math.max(1, nrows - 1));
             const positions = geometry.attributes.position;
-            for (let j = 0; j < nrows; j++) {
-                for (let i = 0; i < ncols; i++) {
-                    const vertexIndex = i + j * ncols; const demRow = (nrows - 1) - j; const demCol = i;
+            
+            console.log(`[${fileName}] Applying DEM row mapping: demRow = j (was (nrows - 1) - j). This assumes DEM data rows are bottom-to-top.`);
+            for (let j = 0; j < nrows; j++) { // j is PlaneGeometry row (bottom-up)
+                for (let i = 0; i < ncols; i++) { // i is PlaneGeometry col (left-right)
+                    const vertexIndex = i + j * ncols;
+                    // MODIFIED ROW MAPPING:
+                    const demRow = j; // Assumes DEM data is ordered bottom-up (row 0 is southernmost)
+                    // const demRow = (nrows - 1) - j; // Standard: Assumes DEM data is top-down (row 0 is northernmost)
+                    const demCol = i; 
+
                     let elevation = (data[demRow] && data[demRow][demCol] !== undefined) ? data[demRow][demCol] : nodata_value;
                     if (elevation === undefined || elevation === null || isNaN(elevation) || elevation === nodata_value) elevation = minElev; 
                     if (positions.array.length > vertexIndex * 3 + 2) positions.setZ(vertexIndex, elevation);
@@ -310,48 +375,49 @@
             const demEntry = {
                 id: `dem-${currentFileId}`, name: fileName,
                 mesh: new THREE.Mesh(geometry, defaultMaterial), 
-                demData: parsedData, materials: { default: defaultMaterial }, 
+                demData: parsedData, // Store original parsed data with its own absolute header
+                materials: { default: defaultMaterial }, 
                 isVisible: true, fileId: currentFileId
             };
-            demEntry.mesh.position.set(header.xllcorner, header.yllcorner, 0);
+            
+            // Position the mesh's CENTER using the calculated relative coordinates
+            demEntry.mesh.position.set(relativeX, relativeY, 0); 
+            console.log(`[${fileName}] Mesh center (relative to first DEM) set to X: ${demEntry.mesh.position.x}, Y: ${demEntry.mesh.position.y}`);
+
             scene.add(demEntry.mesh);
             loadedDEMs.push(demEntry);
-            addDemToPanel(demEntry); // This will now include mesh position
+            addDemToPanel(demEntry); 
             updateDemMaterial(demEntry, ui.materialTypeSelect.value); 
-            ui.centerViewBtn.disabled = false; ui.materialTypeSelect.disabled = false; ui.getAIDescriptionBtn.disabled = false;
+            ui.centerViewBtn.disabled = false; ui.materialTypeSelect.disabled = false; ui.getAIDescriptionBtn.disabled = false; ui.exportUnifiedBtn.disabled = false;
         }
         
         function addDemToPanel(demEntry) {
-            const li = document.createElement('li'); 
-            li.id = `item-${demEntry.id}`;
-            
-            const headerDiv = document.createElement('div');
-            headerDiv.className = 'dem-item-header';
-
+            const li = document.createElement('li'); li.id = `item-${demEntry.id}`;
+            const headerDiv = document.createElement('div'); headerDiv.className = 'dem-item-header';
             const label = document.createElement('label'); 
-            label.setAttribute('for', `vis-${demEntry.id}`); 
-            label.textContent = demEntry.name; 
-            label.title = demEntry.name;
-            
+            label.setAttribute('for', `vis-${demEntry.id}`); label.textContent = demEntry.name; label.title = demEntry.name;
             const checkbox = document.createElement('input'); 
-            checkbox.type = 'checkbox'; 
-            checkbox.id = `vis-${demEntry.id}`; 
-            checkbox.checked = demEntry.isVisible;
+            checkbox.type = 'checkbox'; checkbox.id = `vis-${demEntry.id}`; checkbox.checked = demEntry.isVisible;
             checkbox.addEventListener('change', (e) => { 
                 demEntry.isVisible = e.target.checked; 
                 demEntry.mesh.visible = demEntry.isVisible; 
-                centerView(); 
+                // DO NOT recenter view on visibility toggle
             });
+            const exportButton = document.createElement('button');
+            exportButton.textContent = 'GLB';
+            exportButton.className = 'export-btn-small';
+            exportButton.title = 'Export this DEM as GLB';
+            exportButton.onclick = () => exportIndividualDemGLB(demEntry);
 
-            headerDiv.appendChild(label);
             headerDiv.appendChild(checkbox);
+            headerDiv.appendChild(label);
+            headerDiv.appendChild(exportButton);
             li.appendChild(headerDiv);
-
             const coordsDiv = document.createElement('div');
             coordsDiv.className = 'dem-item-coords';
-            coordsDiv.textContent = `Origin X: ${demEntry.mesh.position.x.toFixed(2)}, Y: ${demEntry.mesh.position.y.toFixed(2)}`;
+            // Displaying the original absolute xllcorner/yllcorner from the header of this specific DEM/chunk
+            coordsDiv.textContent = `Origin (abs): X: ${demEntry.demData.header.xllcorner.toFixed(2)}, Y: ${demEntry.demData.header.yllcorner.toFixed(2)}`;
             li.appendChild(coordsDiv);
-
             ui.demListUl.appendChild(li);
         }
 
@@ -362,18 +428,12 @@
             if (materialType === 'colorElevation') {
                 if (!demEntry.materials.color) {
                     demEntry.materials.color = new THREE.ShaderMaterial({ vertexShader: elevationVertexShader, fragmentShader: colorElevationFragmentShader, uniforms: { minElevation: { value: minElev }, maxElevation: { value: maxElev }, uDirectionalLightDirection: { value: new THREE.Vector3(0.5,0.5,1).normalize() }, uDirectionalLightColor: { value: effectiveDirectionalColor }, uAmbientLightColor: { value: effectiveAmbientColor } } });
-                } else { 
-                    demEntry.materials.color.uniforms.minElevation.value = minElev;
-                    demEntry.materials.color.uniforms.maxElevation.value = maxElev;
-                }
+                } else { demEntry.materials.color.uniforms.minElevation.value = minElev; demEntry.materials.color.uniforms.maxElevation.value = maxElev; }
                 demEntry.mesh.material = demEntry.materials.color;
             } else if (materialType === 'grayElevation') {
                 if (!demEntry.materials.gray) {
                     demEntry.materials.gray = new THREE.ShaderMaterial({ vertexShader: elevationVertexShader, fragmentShader: grayElevationFragmentShader, uniforms: { minElevation: { value: minElev }, maxElevation: { value: maxElev }, uDirectionalLightDirection: { value: new THREE.Vector3(0.5,0.5,1).normalize() }, uDirectionalLightColor: { value: effectiveDirectionalColor }, uAmbientLightColor: { value: effectiveAmbientColor } } });
-                } else {
-                    demEntry.materials.gray.uniforms.minElevation.value = minElev;
-                    demEntry.materials.gray.uniforms.maxElevation.value = maxElev;
-                }
+                } else { demEntry.materials.gray.uniforms.minElevation.value = minElev; demEntry.materials.gray.uniforms.maxElevation.value = maxElev; }
                 demEntry.mesh.material = demEntry.materials.gray;
             } else { demEntry.mesh.material = demEntry.materials.default; }
         }
@@ -382,20 +442,35 @@
 
         function centerView() {
             const visibleMeshes = loadedDEMs.filter(dem => dem.isVisible).map(dem => dem.mesh);
-            if (visibleMeshes.length === 0) { camera.position.set(0,0,100); controls.target.set(0,0,0); controls.update(); return; }
-            const overallBoundingBox = new THREE.Box3();
-            visibleMeshes.forEach((mesh, index) => {
-                mesh.updateMatrixWorld(); const meshBoundingBox = new THREE.Box3().setFromObject(mesh, true);
-                if (index === 0) overallBoundingBox.copy(meshBoundingBox); else overallBoundingBox.union(meshBoundingBox);
-            });
-            if (overallBoundingBox.isEmpty()) return;
-            const center = overallBoundingBox.getCenter(new THREE.Vector3()); const size = overallBoundingBox.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z);
-            if (maxDim === 0 || !isFinite(maxDim)) { camera.position.set(0,0,100); controls.target.set(0,0,0); controls.update(); return; }
-            const fov = camera.fov * (Math.PI / 180); let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-            cameraZ *= 1.8; if (size.z > size.x && size.z > size.y) cameraZ = Math.max(cameraZ, size.z * 1.5);
-            camera.position.set(center.x, center.y - Math.max(size.x,size.y)*0.7, center.z + cameraZ);
-            controls.target.copy(center); camera.lookAt(center); controls.update();
+            const targetPointForSync = new THREE.Vector3(); 
+            if (visibleMeshes.length === 0) { 
+                camera.position.set(0, -200, 200); controls.target.set(0,0,0); targetPointForSync.set(0,0,0);
+            } else {
+                const overallBoundingBox = new THREE.Box3();
+                visibleMeshes.forEach((mesh, index) => {
+                    mesh.updateMatrixWorld(); const meshBoundingBox = new THREE.Box3().setFromObject(mesh, true); 
+                    if (index === 0) overallBoundingBox.copy(meshBoundingBox); else overallBoundingBox.union(meshBoundingBox);
+                });
+                if (overallBoundingBox.isEmpty()) {
+                     camera.position.set(0, -200, 200); controls.target.set(0,0,0); targetPointForSync.set(0,0,0);
+                } else {
+                    const center = overallBoundingBox.getCenter(new THREE.Vector3()); 
+                    const size = overallBoundingBox.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    if (maxDim === 0 || !isFinite(maxDim)) { 
+                        camera.position.set(0, -200, 200); controls.target.set(0,0,0); targetPointForSync.set(0,0,0);
+                    } else {
+                        const fov = camera.fov * (Math.PI / 180);
+                        const largerXYDim = Math.max(size.x, size.y);
+                        let cameraDistance = Math.abs(largerXYDim / 2 / Math.tan(fov / 2));
+                        cameraDistance = Math.max(cameraDistance, size.z); cameraDistance *= 1.5; 
+                        camera.position.set(center.x, center.y - cameraDistance * 0.707, center.z + cameraDistance * 0.707); 
+                        controls.target.copy(center); targetPointForSync.copy(center);
+                    }
+                }
+            }
+            if (!lastMouseIntersectionPoint) lastMouseIntersectionPoint = new THREE.Vector3();
+            lastMouseIntersectionPoint.copy(targetPointForSync);
         }
         
         async function getTerrainDescription() {
@@ -403,7 +478,7 @@
             if (!targetDem) { ui.aiDescriptionPanelContent.textContent="No visible DEM to describe."; ui.aiDescriptionPanel.style.display='block'; return; }
             ui.aiDescriptionPanelContent.innerHTML = `<div class="flex items-center justify-center"><div class="loader-small border-t-purple-500" style="width:20px; height:20px; border-width:3px; animation: spin 1s linear infinite;"></div><span class="ml-2">Generating for ${targetDem.name}...</span></div>`;
             ui.aiDescriptionPanel.style.display='block'; ui.getAIDescriptionBtn.disabled=true;
-            const { header, minElev, maxElev } = targetDem.demData;
+            const { header, minElev, maxElev } = targetDem.demData; 
             const prompt = `Describe this terrain: ${targetDem.name}, Columns: ${header.ncols}, Rows: ${header.nrows}, Cell Size: ${header.cellsize}, Min Elev: ${minElev.toFixed(2)}, Max Elev: ${maxElev.toFixed(2)}. Brief, geographical.`;
             try {
                 let chatHistory = [{ role: "user", parts: [{ text: prompt }] }]; const payload = { contents: chatHistory }; const apiKey = "";
@@ -417,8 +492,65 @@
             finally { ui.getAIDescriptionBtn.disabled = false; }
         }
 
+        function triggerGLBDownload(glbData, fileName) {
+            const blob = new Blob([glbData], { type: 'application/octet-stream' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = fileName;
+            document.body.appendChild(link); 
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+            ui.statusMessage.textContent = `Exported ${fileName}`;
+        }
+
+        function exportIndividualDemGLB(demEntry) {
+            if (!demEntry || !demEntry.mesh) {
+                ui.statusMessage.textContent = "Error: DEM entry or mesh not found for export.";
+                return;
+            }
+            ui.statusMessage.textContent = `Exporting ${demEntry.name} as GLB...`;
+            const exporter = new GLTFExporter();
+            exporter.parse(
+                demEntry.mesh,
+                (glb) => triggerGLBDownload(glb, `${demEntry.name.replace('.asc', '')}.glb`),
+                (error) => { 
+                    console.error('Error exporting individual GLB:', error); 
+                    ui.statusMessage.textContent = `Error exporting ${demEntry.name}. See console.`;
+                },
+                { binary: true }
+            );
+        }
+
+        function exportUnifiedVisibleDemsGLB() {
+            const visibleDems = loadedDEMs.filter(dem => dem.isVisible);
+            if (visibleDems.length === 0) {
+                ui.statusMessage.textContent = "No visible DEMs to export.";
+                return;
+            }
+            ui.statusMessage.textContent = "Exporting unified GLB of visible DEMs...";
+            const group = new THREE.Group();
+            visibleDems.forEach(demEntry => {
+                const clone = demEntry.mesh.clone(); 
+                group.add(clone); 
+            });
+
+            const exporter = new GLTFExporter();
+            exporter.parse(
+                group,
+                (glb) => triggerGLBDownload(glb, 'unified_dems.glb'),
+                (error) => {
+                     console.error('Error exporting unified GLB:', error);
+                     ui.statusMessage.textContent = "Error exporting unified GLB. See console.";
+                },
+                { binary: true }
+            );
+        }
+
+
         ui.fileInput.addEventListener('change', async (event) => {
             const files = event.target.files; if (!files || files.length === 0) return;
+            if (loadedDEMs.length === 0) { firstDemAbsoluteOrigin.x = null; firstDemAbsoluteOrigin.y = null; }
             ui.loader.style.display = 'block'; ui.statusMessage.textContent = `Loading ${files.length} file(s)...`;
             ui.aiDescriptionPanel.style.display = 'none'; 
             let filesProcessedSuccessfully = 0;
@@ -440,11 +572,11 @@
             }
             ui.loader.style.display = 'none';
             if (loadedDEMs.length > 0) {
-                 ui.statusMessage.textContent = `${loadedDEMs.length} DEM(s)/chunk(s) loaded. Click on terrain for coordinates.`; centerView(); // Updated status
+                 ui.statusMessage.textContent = `${loadedDEMs.length} DEM(s)/chunk(s) loaded. Click on terrain for coordinates.`; centerView(); 
             } else if (files.length > 0 && filesProcessedSuccessfully === 0) {
                  ui.statusMessage.textContent = "No valid DEMs were loaded. Check files or console.";
             } else {
-                 ui.statusMessage.textContent = "Please load DEM file(s). Click on terrain for coordinates."; // Updated status
+                 ui.statusMessage.textContent = "Please load DEM file(s). Click on terrain for coordinates."; 
             }
             ui.fileInput.value = ''; 
         });
@@ -453,6 +585,8 @@
         ui.materialTypeSelect.addEventListener('change', updateAllDemMaterials);
         ui.getAIDescriptionBtn.addEventListener('click', getTerrainDescription);
         ui.closeAIDescriptionBtn.addEventListener('click', () => { ui.aiDescriptionPanel.style.display = 'none'; });
+        ui.exportUnifiedBtn.addEventListener('click', exportUnifiedVisibleDemsGLB);
+
 
         initThreeJS();
     </script>
