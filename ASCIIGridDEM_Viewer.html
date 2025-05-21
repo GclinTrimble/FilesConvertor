@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ASCII Grid DEM Viewer with AI Description</title>
+    <title>Multi-DEM Viewer with Click-to-Query & Enhanced Panel</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -18,494 +18,441 @@
     </script>
     <style>
         body { margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; }
-        #canvasContainer { width: 100%; height: 100%; position: relative; }
-        canvas { display: block; }
+        #mainContainer { display: flex; height: calc(100vh - 4rem - 3.5rem); }
+        #demListPanel { width: 280px; /* Slightly wider for coordinates */ background-color: #374151; padding: 10px; overflow-y: auto; border-right: 1px solid #4b5563; }
+        #demListPanel h3 { font-size: 1.1rem; font-semibold; margin-bottom: 10px; color: white; }
+        #demListPanel ul { list-style: none; padding: 0; }
+        #demListPanel li { background-color: #4b5563; margin-bottom: 8px; padding: 8px; border-radius: 4px; }
+        #demListPanel .dem-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;}
+        #demListPanel li label { color: white; font-size: 0.875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 5px; flex-grow: 1;}
+        #demListPanel li input[type="checkbox"] { accent-color: #3b82f6; width: 1rem; height: 1rem; flex-shrink: 0; }
+        #demListPanel .dem-item-coords { font-size: 0.75rem; color: #d1d5db; /* gray-300 */ padding-left: 2px; }
+
+
+        #canvasContainer { flex-grow: 1; height: 100%; position: relative; }
+        canvas { display: block; cursor: crosshair; } /* Change cursor for clickable area */
         .loader {
-            border: 8px solid #f3f3f3;
-            border-top: 8px solid #3498db;
-            border-radius: 50%;
-            width: 60px;
-            height: 60px;
-            animation: spin 1s linear infinite;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 10;
-            display: none;
+            border: 8px solid #f3f3f3; border-top: 8px solid #3498db; border-radius: 50%;
+            width: 60px; height: 60px; animation: spin 1s linear infinite;
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 10; display: none;
         }
         @keyframes spin {
             0% { transform: translate(-50%, -50%) rotate(0deg); }
             100% { transform: translate(-50%, -50%) rotate(360deg); }
         }
         #aiDescriptionPanel {
-            position: absolute;
-            top: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: rgba(42, 50, 62, 0.9); /* bg-gray-800 with opacity */
-            color: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-            z-index: 20;
-            max-width: 90%;
-            width: 500px; /* Max width for the panel */
-            display: none; /* Hidden by default */
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background-color: rgba(42, 50, 62, 0.9); color: white; padding: 15px; border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 20; max-width: 90%; width: 500px;
+            display: none;
         }
-        #aiDescriptionPanelContent {
-            max-height: 200px;
-            overflow-y: auto;
-            font-size: 0.9rem;
-            line-height: 1.4;
-        }
+        #aiDescriptionPanelContent { max-height: 200px; overflow-y: auto; font-size: 0.9rem; line-height: 1.4; }
     </style>
 </head>
 <body class="bg-gray-900 text-white">
 
     <div class="flex flex-col h-screen">
-        <header class="bg-gray-800 p-3 shadow-md">
-            <h1 class="text-xl font-semibold text-center">ASCII Grid DEM Viewer</h1>
+        <header class="bg-gray-800 p-3 shadow-md h-16">
+            <h1 class="text-xl font-semibold text-center">Multi-DEM Viewer</h1>
         </header>
 
-        <div class="bg-gray-700 p-3 shadow-md flex flex-wrap items-center justify-center gap-3">
+        <div class="bg-gray-700 p-3 shadow-md flex flex-wrap items-center justify-center gap-3 h-[3.5rem]">
             <div>
-                <label for="fileInput" class="text-sm font-medium mr-2">Load DEM File (.asc):</label>
-                <input type="file" id="fileInput" accept=".asc" class="text-sm text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border file:border-gray-500 file:text-sm file:font-semibold file:bg-gray-600 file:text-gray-200 hover:file:bg-gray-500 rounded-md">
+                <label for="fileInput" class="text-sm font-medium mr-2">Load DEM(s) (.asc):</label>
+                <input type="file" id="fileInput" accept=".asc" multiple class="text-sm text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border file:border-gray-500 file:text-sm file:font-semibold file:bg-gray-600 file:text-gray-200 hover:file:bg-gray-500 rounded-md">
             </div>
             <button id="centerViewBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>Center View</button>
             <div>
                 <label for="materialType" class="text-sm font-medium mr-2">Shading:</label>
                 <select id="materialType" class="bg-gray-600 border border-gray-500 text-white text-sm rounded-md p-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50" disabled>
-                    <option value="default">Default</option>
-                    <option value="colorElevation">Color by Elevation</option>
-                    <option value="grayElevation">Grayscale by Elevation</option>
+                    <option value="default">Default (with Lighting)</option>
+                    <option value="colorElevation">Color by Elevation (with Lighting)</option>
+                    <option value="grayElevation">Grayscale by Elevation (with Lighting)</option>
                 </select>
             </div>
             <button id="getAIDescriptionBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>✨ Get Terrain Description</button>
         </div>
 
-        <main class="flex-grow relative bg-gray-800">
-            <div id="canvasContainer">
-                <div id="loader" class="loader"></div>
+        <div id="mainContainer">
+            <div id="demListPanel">
+                <h3>Loaded DEMs</h3>
+                <ul id="demList"></ul>
             </div>
-            <div id="statusMessage" class="absolute bottom-2 left-2 bg-gray-900 bg-opacity-75 text-xs p-2 rounded-md">
-                Please load a DEM file.
-            </div>
-            <div id="aiDescriptionPanel">
-                <button id="closeAIDescriptionBtn" class="absolute top-2 right-3 text-gray-300 hover:text-white text-xl font-bold">&times;</button>
-                <h3 class="text-lg font-semibold mb-2">AI Generated Terrain Description</h3>
-                <div id="aiDescriptionPanelContent">Loading description...</div>
-            </div>
-        </main>
+            <main class="flex-grow relative bg-gray-800" id="canvasOuterContainer">
+                <div id="canvasContainer">
+                    <div id="loader" class="loader"></div>
+                </div>
+                <div id="statusMessage" class="absolute bottom-2 left-2 bg-gray-900 bg-opacity-75 text-xs p-2 rounded-md">
+                    Please load DEM file(s). Click on terrain for coordinates.
+                </div>
+                <div id="aiDescriptionPanel">
+                    <button id="closeAIDescriptionBtn" class="absolute top-2 right-3 text-gray-300 hover:text-white text-xl font-bold">&times;</button>
+                    <h3 class="text-lg font-semibold mb-2">AI Generated Terrain Description</h3>
+                    <div id="aiDescriptionPanelContent">Loading description...</div>
+                </div>
+            </main>
+        </div>
     </div>
 
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-        }
-    }
-    </script>
+    <script type="importmap"> { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } } </script>
 
     <script type="module">
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
         let scene, camera, renderer, controls;
-        let terrainMesh = null;
-        let demDataGlobal = null; 
+        let directionalLight, ambientLight;
+        let loadedDEMs = []; 
+        let fileIdCounter = 0;
+        const MAX_POINTS_PER_CHUNK = 10_000_000;
+        let raycaster;
+        const pointer = new THREE.Vector2();
 
-        const canvasContainer = document.getElementById('canvasContainer');
-        const fileInput = document.getElementById('fileInput');
-        const centerViewBtn = document.getElementById('centerViewBtn');
-        const materialTypeSelect = document.getElementById('materialType');
-        const statusMessage = document.getElementById('statusMessage');
-        const loader = document.getElementById('loader');
-        const getAIDescriptionBtn = document.getElementById('getAIDescriptionBtn');
-        const aiDescriptionPanel = document.getElementById('aiDescriptionPanel');
-        const aiDescriptionPanelContent = document.getElementById('aiDescriptionPanelContent');
-        const closeAIDescriptionBtn = document.getElementById('closeAIDescriptionBtn');
 
-        // Shader definitions (unchanged)
-        const elevationVertexShader = `
-            varying float vElevation;
-            void main() {
-                vElevation = position.z;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            }
-        `;
+        const ui = {
+            canvasContainer: document.getElementById('canvasContainer'),
+            fileInput: document.getElementById('fileInput'),
+            centerViewBtn: document.getElementById('centerViewBtn'),
+            materialTypeSelect: document.getElementById('materialType'),
+            statusMessage: document.getElementById('statusMessage'),
+            loader: document.getElementById('loader'),
+            getAIDescriptionBtn: document.getElementById('getAIDescriptionBtn'),
+            aiDescriptionPanel: document.getElementById('aiDescriptionPanel'),
+            aiDescriptionPanelContent: document.getElementById('aiDescriptionPanelContent'),
+            closeAIDescriptionBtn: document.getElementById('closeAIDescriptionBtn'),
+            demListUl: document.getElementById('demList')
+        };
 
-        const colorElevationFragmentShader = `
-            varying float vElevation;
-            uniform float minElevation;
-            uniform float maxElevation;
-            vec3 colorRamp(float t) {
-                vec3 c1 = vec3(0.0, 0.0, 1.0); vec3 c2 = vec3(0.0, 1.0, 0.0);
-                vec3 c3 = vec3(1.0, 1.0, 0.0); vec3 c4 = vec3(1.0, 0.0, 0.0);
-                if (t < 0.0) t = 0.0; if (t > 1.0) t = 1.0;
-                if (t < 0.33) return mix(c1, c2, t / 0.33);
-                if (t < 0.66) return mix(c2, c3, (t - 0.33) / 0.33);
-                return mix(c3, c4, (t - 0.66) / 0.34);
-            }
-            void main() {
-                if (maxElevation == minElevation) {
-                    gl_FragColor = vec4(0.5, 0.5, 0.5, 1.0);
-                } else {
-                    float normalizedElevation = (vElevation - minElevation) / (maxElevation - minElevation);
-                    gl_FragColor = vec4(colorRamp(normalizedElevation), 1.0);
-                }
-            }
-        `;
-        
-        const grayElevationFragmentShader = `
-            varying float vElevation;
-            uniform float minElevation;
-            uniform float maxElevation;
-            void main() {
-                if (maxElevation == minElevation) {
-                    gl_FragColor = vec4(0.5, 0.5, 0.5, 1.0);
-                } else {
-                    float normalizedElevation = (vElevation - minElevation) / (maxElevation - minElevation);
-                    normalizedElevation = clamp(normalizedElevation, 0.0, 1.0);
-                    gl_FragColor = vec4(normalizedElevation, normalizedElevation, normalizedElevation, 1.0);
-                }
-            }
-        `;
-
-        let defaultMaterial, colorElevationMaterial, grayElevationMaterial;
+        const elevationVertexShader = `varying float vElevation; varying vec3 vNormal; void main() { vElevation = position.z; vNormal = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+        const colorElevationFragmentShader = `varying float vElevation; varying vec3 vNormal; uniform float minElevation; uniform float maxElevation; uniform vec3 uDirectionalLightDirection; uniform vec3 uDirectionalLightColor; uniform vec3 uAmbientLightColor; vec3 colorRamp(float t) { vec3 c1=vec3(0.0,0.0,1.0); vec3 c2=vec3(0.0,1.0,0.0); vec3 c3=vec3(1.0,1.0,0.0); vec3 c4=vec3(1.0,0.0,0.0); if(t<0.0) t=0.0; if(t>1.0) t=1.0; if(t<0.33) return mix(c1,c2,t/0.33); if(t<0.66) return mix(c2,c3,(t-0.33)/0.33); return mix(c3,c4,(t-0.66)/0.34); } void main() { vec3 baseColor; if(maxElevation==minElevation){ baseColor=vec3(0.5,0.5,0.5); } else { baseColor=colorRamp((vElevation-minElevation)/(maxElevation-minElevation)); } vec3 norm=normalize(vNormal); float dotNL=max(dot(norm,normalize(uDirectionalLightDirection)),0.0); vec3 diffuse=uDirectionalLightColor*dotNL; vec3 finalColor=baseColor*(uAmbientLightColor+diffuse); gl_FragColor=vec4(finalColor,1.0); }`;
+        const grayElevationFragmentShader = `varying float vElevation; varying vec3 vNormal; uniform float minElevation; uniform float maxElevation; uniform vec3 uDirectionalLightDirection; uniform vec3 uDirectionalLightColor; uniform vec3 uAmbientLightColor; void main() { vec3 baseColor; if(maxElevation==minElevation){ baseColor=vec3(0.5,0.5,0.5); } else { float nE=(vElevation-minElevation)/(maxElevation-minElevation); nE=clamp(nE,0.0,1.0); baseColor=vec3(nE,nE,nE); } vec3 norm=normalize(vNormal); float dotNL=max(dot(norm,normalize(uDirectionalLightDirection)),0.0); vec3 diffuse=uDirectionalLightColor*dotNL; vec3 finalColor=baseColor*(uAmbientLightColor+diffuse); gl_FragColor=vec4(finalColor,1.0); }`;
+        let defaultMaterial;
+        const lightWorldDirection = new THREE.Vector3();
+        const viewSpaceLightDirection = new THREE.Vector3();
 
         function initThreeJS() {
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x2d3748); 
-
-            camera = new THREE.PerspectiveCamera(75, canvasContainer.clientWidth / canvasContainer.clientHeight, 0.1, 50000);
-            camera.position.set(0, 0, 100); 
-
+            scene = new THREE.Scene(); scene.background = new THREE.Color(0x2d3748);
+            camera = new THREE.PerspectiveCamera(75, ui.canvasContainer.clientWidth / ui.canvasContainer.clientHeight, 0.1, 100000);
+            camera.position.set(0, 0, 100);
             renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
-            canvasContainer.appendChild(renderer.domElement);
-
+            renderer.setSize(ui.canvasContainer.clientWidth, ui.canvasContainer.clientHeight);
+            ui.canvasContainer.appendChild(renderer.domElement);
             controls = new OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
-            
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-            scene.add(ambientLight);
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(50, 50, 50);
-            scene.add(directionalLight);
-
+            controls.enableDamping = true; controls.dampingFactor = 0.05;
+            ambientLight = new THREE.AmbientLight(0xffffff, 0.7); scene.add(ambientLight);
+            directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 50, 50); scene.add(directionalLight);
             defaultMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc, flatShading: false });
-            colorElevationMaterial = new THREE.ShaderMaterial({
-                vertexShader: elevationVertexShader, fragmentShader: colorElevationFragmentShader,
-                uniforms: { minElevation: { value: 0.0 }, maxElevation: { value: 100.0 } }
-            });
-            grayElevationMaterial = new THREE.ShaderMaterial({
-                vertexShader: elevationVertexShader, fragmentShader: grayElevationFragmentShader,
-                uniforms: { minElevation: { value: 0.0 }, maxElevation: { value: 100.0 } }
-            });
+            
+            raycaster = new THREE.Raycaster();
+            renderer.domElement.addEventListener('click', onCanvasClick, false);
 
             animate();
             window.addEventListener('resize', onWindowResize, false);
+            setTimeout(onWindowResize, 0);
         }
 
         function onWindowResize() {
-            camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+            if (!renderer || !camera || !ui.canvasContainer) return;
+            const newWidth = ui.canvasContainer.clientWidth; const newHeight = ui.canvasContainer.clientHeight;
+            if (newWidth > 0 && newHeight > 0) {
+                camera.aspect = newWidth / newHeight; camera.updateProjectionMatrix();
+                renderer.setSize(newWidth, newHeight);
+            }
         }
 
         function animate() {
-            requestAnimationFrame(animate);
-            controls.update();
+            requestAnimationFrame(animate); controls.update();
+            if (directionalLight && camera) {
+                directionalLight.getWorldDirection(lightWorldDirection); lightWorldDirection.negate();
+                viewSpaceLightDirection.copy(lightWorldDirection).transformDirection(camera.matrixWorldInverse).normalize();
+                loadedDEMs.forEach(dem => {
+                    if (dem.isVisible && dem.mesh && dem.mesh.material instanceof THREE.ShaderMaterial) {
+                        if (dem.mesh.material.uniforms.uDirectionalLightDirection) {
+                            dem.mesh.material.uniforms.uDirectionalLightDirection.value.copy(viewSpaceLightDirection);
+                        }
+                    }
+                });
+            }
             renderer.render(scene, camera);
         }
 
-        function parseASCIIGrid(fileContent) {
-            // This function remains largely the same as before.
-            // For brevity, I'm not repeating the full code here but it's identical to your provided version.
-            // Ensure it returns { header, data, minElev, maxElev } or null on error.
+        function onCanvasClick(event) {
+            // Calculate pointer position in normalized device coordinates (-1 to +1) for both components
+            const rect = renderer.domElement.getBoundingClientRect();
+            pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(pointer, camera);
+
+            const visibleMeshes = loadedDEMs.filter(dem => dem.isVisible).map(dem => dem.mesh);
+            if (visibleMeshes.length === 0) return;
+
+            const intersects = raycaster.intersectObjects(visibleMeshes);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0]; // Closest intersection
+                const point = intersect.point;
+                const demName = loadedDEMs.find(d => d.mesh === intersect.object)?.name || "Unknown DEM";
+                ui.statusMessage.textContent = `Clicked on ${demName}: X: ${point.x.toFixed(2)}, Y: ${point.y.toFixed(2)}, Z (Elevation): ${point.z.toFixed(2)}`;
+            } else {
+                ui.statusMessage.textContent = "No terrain clicked. Click on terrain for coordinates.";
+            }
+        }
+        
+        function _parseFullASCIIGridData(fileContent, fileNameForLogging = "Unknown File") {
             try {
-                const lines = fileContent.split(/\r?\n/);
-                const header = {};
-                let dataStartIndex = 0;
+                const lines = fileContent.split(/\r?\n/); const header = {}; let dataStartIndex = 0;
                 const headerKeys = ["ncols", "nrows", "xllcorner", "yllcorner", "cellsize", "nodata_value"];
-                
                 for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line) continue; 
-
+                    const line = lines[i].trim(); if (!line) continue;
                     const parts = line.split(/\s+/);
-                    if (parts.length >= 2 && headerKeys.includes(parts[0].toLowerCase())) {
-                        header[parts[0].toLowerCase()] = parseFloat(parts[1]);
-                    } else if (Object.keys(header).length >= headerKeys.length-1) { 
-                        if (parts.every(p => !isNaN(parseFloat(p)))) {
-                            dataStartIndex = i;
-                            break;
-                        }
-                    }
-                    if (i > 10 && Object.keys(header).length < 4) { 
-                        throw new Error("Invalid DEM header format.");
-                    }
+                    if (parts.length >= 2 && headerKeys.includes(parts[0].toLowerCase())) header[parts[0].toLowerCase()] = parseFloat(parts[1]);
+                    else if (Object.keys(header).length >= headerKeys.length-1 && parts.every(p => !isNaN(parseFloat(p)))) { dataStartIndex = i; break; }
+                    if (i > 10 && Object.keys(header).length < 4) throw new Error("Invalid DEM header format.");
                 }
-                
-                for (const key of ["ncols", "nrows", "cellsize"]) {
-                    if (typeof header[key] !== 'number' || isNaN(header[key])) {
-                        throw new Error(`Missing or invalid header field: ${key}`);
-                    }
-                }
-                if (typeof header["xllcorner"] !== 'number') header["xllcorner"] = 0;
-                if (typeof header["yllcorner"] !== 'number') header["yllcorner"] = 0;
-                if (typeof header["nodata_value"] !== 'number') header["nodata_value"] = -9999; 
-
-                const ncols = Math.floor(header.ncols);
-                const nrows = Math.floor(header.nrows);
-                const nodata_value = header.nodata_value;
-
-                const elevationData = [];
-                let minElev = Infinity;
-                let maxElev = -Infinity;
-                let validDataPoints = 0;
-
+                const requiredKeys = ["ncols", "nrows", "cellsize"];
+                for (const key of requiredKeys) if (typeof header[key] !== 'number' || isNaN(header[key])) throw new Error(`Missing/invalid: '${key}'.`);
+                const geoKeys = ["xllcorner", "yllcorner", "nodata_value"];
+                const defaultGeoValues = { "xllcorner": 0, "yllcorner": 0, "nodata_value": -9999 };
+                for (const key of geoKeys) if (typeof header[key] !== 'number' || isNaN(header[key])) header[key] = defaultGeoValues[key];
+                const ncols = Math.floor(header.ncols); const nrows = Math.floor(header.nrows);
+                const nodata_value = header.nodata_value; const elevationData = [];
+                let minElev = Infinity; let maxElev = -Infinity; let validDataPoints = 0;
                 for (let i = 0; i < nrows; i++) {
                     const line = lines[dataStartIndex + i];
-                    if (!line) {
-                        const rowData = new Array(ncols).fill(nodata_value);
-                        elevationData.push(rowData);
-                        continue;
-                    }
+                    if (!line) { elevationData.push(new Array(ncols).fill(nodata_value)); continue; }
                     const values = line.trim().split(/\s+/).map(parseFloat);
-                    if (values.length !== ncols) {
-                         const correctedValues = new Array(ncols).fill(nodata_value);
-                         for(let k=0; k < Math.min(values.length, ncols); k++) {
-                            correctedValues[k] = values[k];
-                         }
-                         elevationData.push(correctedValues);
-                    } else {
-                        elevationData.push(values);
-                    }
-
-                    for (const val of elevationData[i]) {
-                        if (val !== nodata_value && !isNaN(val)) {
-                            if (val < minElev) minElev = val;
-                            if (val > maxElev) maxElev = val;
-                            validDataPoints++;
-                        }
-                    }
+                    const rowToAdd = new Array(ncols).fill(nodata_value);
+                    for(let k=0; k < Math.min(values.length, ncols); k++) rowToAdd[k] = values[k];
+                    elevationData.push(rowToAdd);
+                    for (const val of rowToAdd) if (val !== nodata_value && !isNaN(val)) { if (val < minElev) minElev = val; if (val > maxElev) maxElev = val; validDataPoints++; }
                 }
-                
                 if (validDataPoints === 0) { minElev = 0; maxElev = 0; }
                 if (minElev === Infinity) minElev = nodata_value !== -Infinity ? nodata_value : 0;
                 if (maxElev === -Infinity) maxElev = nodata_value !== Infinity ? nodata_value : 0;
-
                 return { header, data: elevationData, minElev, maxElev };
-            } catch (error) {
-                console.error("Error parsing ASCII Grid file:", error);
-                statusMessage.textContent = `Error parsing file: ${error.message}`;
-                statusMessage.style.color = 'red';
-                return null;
-            }
+            } catch (error) { console.error(`Full Parse Error (${fileNameForLogging}):`, error); ui.statusMessage.textContent = `Parse Error for ${fileNameForLogging}: ${error.message}`; return null; }
         }
 
-        function createTerrain(parsedData) {
-            if (terrainMesh) {
-                scene.remove(terrainMesh);
-                terrainMesh.geometry.dispose();
+        function parseAndSplitASCIIGridController(fileContent, originalFileName) {
+            ui.statusMessage.textContent = `Processing ${originalFileName}...`;
+            const fullParsedData = _parseFullASCIIGridData(fileContent, originalFileName);
+            if (!fullParsedData) return [];
+            const { header: originalHeader, data: originalElevationData } = fullParsedData;
+            const totalPoints = originalHeader.ncols * originalHeader.nrows;
+            if (totalPoints <= MAX_POINTS_PER_CHUNK) {
+                return [{ name: originalFileName, parsedData: fullParsedData }];
             }
-            demDataGlobal = parsedData;
-            const { header, data, minElev, maxElev } = parsedData;
-            const ncols = Math.floor(header.ncols);
-            const nrows = Math.floor(header.nrows);
-            const cellsize = header.cellsize;
-            const nodata_value = header.nodata_value;
-
-            const planeWidth = (ncols - 1) * cellsize;
-            const planeHeight = (nrows - 1) * cellsize;
-            const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight, ncols - 1, nrows - 1);
-            const positions = geometry.attributes.position;
-
-            for (let j = 0; j < nrows; j++) { 
-                for (let i = 0; i < ncols; i++) { 
-                    const vertexIndex = i + j * ncols;
-                    const demRow = (nrows - 1) - j; 
-                    const demCol = i;
-                    let elevation = data[demRow] ? data[demRow][demCol] : nodata_value;
-                    if (elevation === undefined || elevation === null || isNaN(elevation) || elevation === nodata_value) {
-                        elevation = minElev; 
+            console.log(`DEM ${originalFileName} is too large (${totalPoints} points). Splitting...`);
+            ui.statusMessage.textContent = `Splitting ${originalFileName} (large file)...`;
+            const resultsArray = []; let numChunksX = 1; let numChunksY = 1;
+            while (true) {
+                const currentChunkCols = Math.ceil(originalHeader.ncols / numChunksX);
+                const currentChunkRows = Math.ceil(originalHeader.nrows / numChunksY);
+                if (currentChunkCols * currentChunkRows <= MAX_POINTS_PER_CHUNK) break;
+                if (numChunksX * originalHeader.nrows > numChunksY * originalHeader.ncols) numChunksY++; else numChunksX++;
+                if (numChunksX > originalHeader.ncols && numChunksY > originalHeader.nrows) { return [{ name: originalFileName, parsedData: fullParsedData }]; }
+            }
+            console.log(`Splitting ${originalFileName} into ${numChunksX}x${numChunksY} chunks.`);
+            ui.statusMessage.textContent = `Splitting ${originalFileName} into ${numChunksX * numChunksY} chunks...`;
+            for (let cy = 0; cy < numChunksY; cy++) {
+                for (let cx = 0; cx < numChunksX; cx++) {
+                    const chunkName = `${originalFileName}_part${cy}_${cx}`;
+                    const startRowOrig = Math.floor(cy * originalHeader.nrows / numChunksY);
+                    const endRowOrig = Math.floor((cy + 1) * originalHeader.nrows / numChunksY);
+                    const chunkNRows = endRowOrig - startRowOrig;
+                    const startColOrig = Math.floor(cx * originalHeader.ncols / numChunksX);
+                    const endColOrig = Math.floor((cx + 1) * originalHeader.ncols / numChunksX);
+                    const chunkNCols = endColOrig - startColOrig;
+                    if (chunkNCols <= 0 || chunkNRows <= 0) continue;
+                    const chunkHeader = { ...originalHeader };
+                    chunkHeader.ncols = chunkNCols; chunkHeader.nrows = chunkNRows;
+                    chunkHeader.xllcorner = originalHeader.xllcorner + (startColOrig * originalHeader.cellsize);
+                    chunkHeader.yllcorner = originalHeader.yllcorner + ((originalHeader.nrows - endRowOrig) * originalHeader.cellsize);
+                    const chunkElevationData = []; let chunkMinElev = Infinity; let chunkMaxElev = -Infinity; let chunkValidPoints = 0;
+                    for (let r = 0; r < chunkNRows; r++) {
+                        const originalRowIndex = startRowOrig + r;
+                        if (originalRowIndex < 0 || originalRowIndex >= originalHeader.nrows) continue;
+                        const originalRowData = originalElevationData[originalRowIndex];
+                        const newRow = originalRowData.slice(startColOrig, endColOrig);
+                        chunkElevationData.push(newRow);
+                        for (const val of newRow) if (val !== chunkHeader.nodata_value && !isNaN(val)) { if (val < chunkMinElev) chunkMinElev = val; if (val > chunkMaxElev) chunkMaxElev = val; chunkValidPoints++; }
                     }
-                    if (positions.array.length > vertexIndex * 3 + 2) {
-                         positions.setZ(vertexIndex, elevation);
-                    }
+                    if (chunkValidPoints === 0) { chunkMinElev = 0; chunkMaxElev = 0; }
+                    if (chunkMinElev === Infinity) chunkMinElev = chunkHeader.nodata_value !== -Infinity ? chunkHeader.nodata_value : 0;
+                    if (chunkMaxElev === -Infinity) chunkMaxElev = chunkHeader.nodata_value !== Infinity ? chunkHeader.nodata_value : 0;
+                    resultsArray.push({ name: chunkName, parsedData: { header: chunkHeader, data: chunkElevationData, minElev: chunkMinElev, maxElev: chunkMaxElev } });
                 }
             }
-            geometry.computeVertexNormals(); 
-            updateTerrainMaterial(); 
-            terrainMesh = new THREE.Mesh(geometry, defaultMaterial); 
-            terrainMesh.position.set(
-                header.xllcorner + planeWidth / 2,
-                header.yllcorner + planeHeight / 2,
-                0 
-            );
-            scene.add(terrainMesh);
-            statusMessage.textContent = `DEM loaded: ${ncols}x${nrows} cells. Elevation: ${minElev.toFixed(2)} to ${maxElev.toFixed(2)}.`;
-            statusMessage.style.color = 'white';
-            centerViewBtn.disabled = false;
-            materialTypeSelect.disabled = false;
-            getAIDescriptionBtn.disabled = false; // Enable AI button
+            return resultsArray;
         }
 
-        function centerView() {
-            if (!terrainMesh) return;
-            const boundingBox = new THREE.Box3().setFromObject(terrainMesh);
-            const center = boundingBox.getCenter(new THREE.Vector3());
-            const size = boundingBox.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z);
-            const fov = camera.fov * (Math.PI / 180);
-            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-            cameraZ *= 1.8; 
-            if (size.z > size.x && size.z > size.y) { 
-                 cameraZ = Math.max(cameraZ, size.z * 1.5);
+        function createAndAddTerrain(fileName, parsedData) {
+            const { header, data, minElev, maxElev } = parsedData;
+            const ncols = Math.floor(header.ncols); const nrows = Math.floor(header.nrows);
+            const cellsize = header.cellsize; const nodata_value = header.nodata_value;
+            const planeWidthForGeom = (ncols - 1) * cellsize; 
+            const planeHeightForGeom = (nrows - 1) * cellsize;
+            const geometry = new THREE.PlaneGeometry(planeWidthForGeom, planeHeightForGeom, Math.max(1, ncols - 1), Math.max(1, nrows - 1));
+            const positions = geometry.attributes.position;
+            for (let j = 0; j < nrows; j++) {
+                for (let i = 0; i < ncols; i++) {
+                    const vertexIndex = i + j * ncols; const demRow = (nrows - 1) - j; const demCol = i;
+                    let elevation = (data[demRow] && data[demRow][demCol] !== undefined) ? data[demRow][demCol] : nodata_value;
+                    if (elevation === undefined || elevation === null || isNaN(elevation) || elevation === nodata_value) elevation = minElev; 
+                    if (positions.array.length > vertexIndex * 3 + 2) positions.setZ(vertexIndex, elevation);
+                }
             }
-            camera.position.set(center.x, center.y - Math.max(size.x,size.y) * 0.7 , center.z + cameraZ);
-            controls.target.copy(center);
-            camera.lookAt(center); 
-            controls.update();
+            geometry.computeVertexNormals();
+            const currentFileId = fileIdCounter++;
+            const demEntry = {
+                id: `dem-${currentFileId}`, name: fileName,
+                mesh: new THREE.Mesh(geometry, defaultMaterial), 
+                demData: parsedData, materials: { default: defaultMaterial }, 
+                isVisible: true, fileId: currentFileId
+            };
+            demEntry.mesh.position.set(header.xllcorner, header.yllcorner, 0);
+            scene.add(demEntry.mesh);
+            loadedDEMs.push(demEntry);
+            addDemToPanel(demEntry); // This will now include mesh position
+            updateDemMaterial(demEntry, ui.materialTypeSelect.value); 
+            ui.centerViewBtn.disabled = false; ui.materialTypeSelect.disabled = false; ui.getAIDescriptionBtn.disabled = false;
         }
         
-        function updateTerrainMaterial() {
-            if (!terrainMesh || !demDataGlobal) return;
-            const type = materialTypeSelect.value;
-            const { minElev, maxElev } = demDataGlobal;
+        function addDemToPanel(demEntry) {
+            const li = document.createElement('li'); 
+            li.id = `item-${demEntry.id}`;
+            
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'dem-item-header';
 
-            colorElevationMaterial.uniforms.minElevation.value = minElev;
-            colorElevationMaterial.uniforms.maxElevation.value = maxElev;
-            grayElevationMaterial.uniforms.minElevation.value = minElev;
-            grayElevationMaterial.uniforms.maxElevation.value = maxElev;
-            colorElevationMaterial.needsUpdate = true;
-            grayElevationMaterial.needsUpdate = true;
+            const label = document.createElement('label'); 
+            label.setAttribute('for', `vis-${demEntry.id}`); 
+            label.textContent = demEntry.name; 
+            label.title = demEntry.name;
+            
+            const checkbox = document.createElement('input'); 
+            checkbox.type = 'checkbox'; 
+            checkbox.id = `vis-${demEntry.id}`; 
+            checkbox.checked = demEntry.isVisible;
+            checkbox.addEventListener('change', (e) => { 
+                demEntry.isVisible = e.target.checked; 
+                demEntry.mesh.visible = demEntry.isVisible; 
+                centerView(); 
+            });
 
-            switch (type) {
-                case 'colorElevation': terrainMesh.material = colorElevationMaterial; break;
-                case 'grayElevation': terrainMesh.material = grayElevationMaterial; break;
-                default: terrainMesh.material = defaultMaterial; break;
-            }
-            terrainMesh.material.needsUpdate = true;
+            headerDiv.appendChild(label);
+            headerDiv.appendChild(checkbox);
+            li.appendChild(headerDiv);
+
+            const coordsDiv = document.createElement('div');
+            coordsDiv.className = 'dem-item-coords';
+            coordsDiv.textContent = `Origin X: ${demEntry.mesh.position.x.toFixed(2)}, Y: ${demEntry.mesh.position.y.toFixed(2)}`;
+            li.appendChild(coordsDiv);
+
+            ui.demListUl.appendChild(li);
         }
 
-        async function getTerrainDescription() {
-            if (!demDataGlobal) {
-                aiDescriptionPanelContent.textContent = "No DEM data loaded to describe.";
-                aiDescriptionPanel.style.display = 'block';
-                return;
-            }
-
-            aiDescriptionPanelContent.innerHTML = '<div class="flex items-center justify-center"><div class="loader-small border-t-purple-500" style="width:20px; height:20px; border-width:3px;"></div><span class="ml-2">Generating description...</span></div>';
-            aiDescriptionPanel.style.display = 'block';
-            getAIDescriptionBtn.disabled = true;
-
-            const { header, minElev, maxElev } = demDataGlobal;
-            const prompt = `You are a helpful assistant. Based on the following Digital Elevation Model (DEM) characteristics, provide a brief, engaging geographical description of the terrain (1-3 sentences).
-- Number of columns (width units): ${header.ncols}
-- Number of rows (height units): ${header.nrows}
-- Cell size (spatial resolution): ${header.cellsize} (map units per cell side)
-- Minimum elevation: ${minElev.toFixed(2)} (map units)
-- Maximum elevation: ${maxElev.toFixed(2)} (map units)
-- Vertical exaggeration is not applied in these values.
-Focus on the general landscape type (e.g., relatively flat, gently rolling, hilly, mountainous, deep valleys, plateaus) and the overall scale of elevation changes. Do not mention the specific numbers unless it's key to the description (e.g. "very high peak"). Be descriptive and evocative.`;
-
-            try {
-                let chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
-                const payload = { contents: chatHistory };
-                const apiKey = ""; // Will be automatically provided by the Canvas environment
-                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-                
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    console.error("Gemini API Error:", errorData);
-                    throw new Error(`API request failed with status ${response.status}: ${errorData.error?.message || 'Unknown error'}`);
+        function updateDemMaterial(demEntry, materialType) {
+            const { minElev, maxElev } = demEntry.demData;
+            const effectiveAmbientColor = new THREE.Color(ambientLight.color).multiplyScalar(ambientLight.intensity);
+            const effectiveDirectionalColor = new THREE.Color(directionalLight.color).multiplyScalar(directionalLight.intensity);
+            if (materialType === 'colorElevation') {
+                if (!demEntry.materials.color) {
+                    demEntry.materials.color = new THREE.ShaderMaterial({ vertexShader: elevationVertexShader, fragmentShader: colorElevationFragmentShader, uniforms: { minElevation: { value: minElev }, maxElevation: { value: maxElev }, uDirectionalLightDirection: { value: new THREE.Vector3(0.5,0.5,1).normalize() }, uDirectionalLightColor: { value: effectiveDirectionalColor }, uAmbientLightColor: { value: effectiveAmbientColor } } });
+                } else { 
+                    demEntry.materials.color.uniforms.minElevation.value = minElev;
+                    demEntry.materials.color.uniforms.maxElevation.value = maxElev;
                 }
-
-                const result = await response.json();
-
-                if (result.candidates && result.candidates.length > 0 &&
-                    result.candidates[0].content && result.candidates[0].content.parts &&
-                    result.candidates[0].content.parts.length > 0) {
-                    const text = result.candidates[0].content.parts[0].text;
-                    aiDescriptionPanelContent.textContent = text;
+                demEntry.mesh.material = demEntry.materials.color;
+            } else if (materialType === 'grayElevation') {
+                if (!demEntry.materials.gray) {
+                    demEntry.materials.gray = new THREE.ShaderMaterial({ vertexShader: elevationVertexShader, fragmentShader: grayElevationFragmentShader, uniforms: { minElevation: { value: minElev }, maxElevation: { value: maxElev }, uDirectionalLightDirection: { value: new THREE.Vector3(0.5,0.5,1).normalize() }, uDirectionalLightColor: { value: effectiveDirectionalColor }, uAmbientLightColor: { value: effectiveAmbientColor } } });
                 } else {
-                    throw new Error("No valid content received from API.");
+                    demEntry.materials.gray.uniforms.minElevation.value = minElev;
+                    demEntry.materials.gray.uniforms.maxElevation.value = maxElev;
                 }
-            } catch (error) {
-                console.error("Error fetching terrain description:", error);
-                aiDescriptionPanelContent.textContent = `Error: Could not generate description. ${error.message}`;
-            } finally {
-                getAIDescriptionBtn.disabled = false;
-            }
+                demEntry.mesh.material = demEntry.materials.gray;
+            } else { demEntry.mesh.material = demEntry.materials.default; }
+        }
+        
+        function updateAllDemMaterials() { loadedDEMs.forEach(dem => { updateDemMaterial(dem, ui.materialTypeSelect.value); }); }
+
+        function centerView() {
+            const visibleMeshes = loadedDEMs.filter(dem => dem.isVisible).map(dem => dem.mesh);
+            if (visibleMeshes.length === 0) { camera.position.set(0,0,100); controls.target.set(0,0,0); controls.update(); return; }
+            const overallBoundingBox = new THREE.Box3();
+            visibleMeshes.forEach((mesh, index) => {
+                mesh.updateMatrixWorld(); const meshBoundingBox = new THREE.Box3().setFromObject(mesh, true);
+                if (index === 0) overallBoundingBox.copy(meshBoundingBox); else overallBoundingBox.union(meshBoundingBox);
+            });
+            if (overallBoundingBox.isEmpty()) return;
+            const center = overallBoundingBox.getCenter(new THREE.Vector3()); const size = overallBoundingBox.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            if (maxDim === 0 || !isFinite(maxDim)) { camera.position.set(0,0,100); controls.target.set(0,0,0); controls.update(); return; }
+            const fov = camera.fov * (Math.PI / 180); let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+            cameraZ *= 1.8; if (size.z > size.x && size.z > size.y) cameraZ = Math.max(cameraZ, size.z * 1.5);
+            camera.position.set(center.x, center.y - Math.max(size.x,size.y)*0.7, center.z + cameraZ);
+            controls.target.copy(center); camera.lookAt(center); controls.update();
+        }
+        
+        async function getTerrainDescription() {
+            let targetDem = null; for (let i=loadedDEMs.length-1; i>=0; i--) if (loadedDEMs[i].isVisible) { targetDem=loadedDEMs[i]; break; }
+            if (!targetDem) { ui.aiDescriptionPanelContent.textContent="No visible DEM to describe."; ui.aiDescriptionPanel.style.display='block'; return; }
+            ui.aiDescriptionPanelContent.innerHTML = `<div class="flex items-center justify-center"><div class="loader-small border-t-purple-500" style="width:20px; height:20px; border-width:3px; animation: spin 1s linear infinite;"></div><span class="ml-2">Generating for ${targetDem.name}...</span></div>`;
+            ui.aiDescriptionPanel.style.display='block'; ui.getAIDescriptionBtn.disabled=true;
+            const { header, minElev, maxElev } = targetDem.demData;
+            const prompt = `Describe this terrain: ${targetDem.name}, Columns: ${header.ncols}, Rows: ${header.nrows}, Cell Size: ${header.cellsize}, Min Elev: ${minElev.toFixed(2)}, Max Elev: ${maxElev.toFixed(2)}. Brief, geographical.`;
+            try {
+                let chatHistory = [{ role: "user", parts: [{ text: prompt }] }]; const payload = { contents: chatHistory }; const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                if (!response.ok) { const errorData = await response.json(); throw new Error(`API Error: ${errorData.error?.message || response.status}`); }
+                const result = await response.json();
+                if (result.candidates?.[0]?.content?.parts?.[0]?.text) ui.aiDescriptionPanelContent.textContent = result.candidates[0].content.parts[0].text;
+                else throw new Error("No valid content from API.");
+            } catch (error) { ui.aiDescriptionPanelContent.textContent = `Error: ${error.message}`; }
+            finally { ui.getAIDescriptionBtn.disabled = false; }
         }
 
-        fileInput.addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (file) {
+        ui.fileInput.addEventListener('change', async (event) => {
+            const files = event.target.files; if (!files || files.length === 0) return;
+            ui.loader.style.display = 'block'; ui.statusMessage.textContent = `Loading ${files.length} file(s)...`;
+            ui.aiDescriptionPanel.style.display = 'none'; 
+            let filesProcessedSuccessfully = 0;
+            for (const file of files) {
                 if (!file.name.toLowerCase().endsWith('.asc')) {
-                    statusMessage.textContent = 'Error: Please select a .asc file.';
-                    statusMessage.style.color = 'red';
-                    return;
+                    ui.statusMessage.textContent = `Skipping non .asc file: ${file.name}`; console.warn(`Skipping non .asc file: ${file.name}`); continue;
                 }
-                loader.style.display = 'block';
-                statusMessage.textContent = 'Loading and parsing file...';
-                statusMessage.style.color = 'white';
-                aiDescriptionPanel.style.display = 'none'; // Hide AI panel on new file load
-
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    try {
-                        const parsedData = parseASCIIGrid(e.target.result);
-                        if (parsedData) {
-                            createTerrain(parsedData);
-                            centerView(); 
-                        } else {
-                            // Disable buttons if parsing failed and no terrain is shown
-                            centerViewBtn.disabled = true;
-                            materialTypeSelect.disabled = true;
-                            getAIDescriptionBtn.disabled = true;
-                        }
-                    } catch (error) {
-                        console.error("Error processing file:", error);
-                        statusMessage.textContent = `Error: ${error.message}`;
-                        statusMessage.style.color = 'red';
-                        centerViewBtn.disabled = true;
-                        materialTypeSelect.disabled = true;
-                        getAIDescriptionBtn.disabled = true;
-                    } finally {
-                        loader.style.display = 'none';
-                    }
-                };
-                reader.onerror = () => {
-                    statusMessage.textContent = 'Error reading file.';
-                    statusMessage.style.color = 'red';
-                    loader.style.display = 'none';
-                    centerViewBtn.disabled = true;
-                    materialTypeSelect.disabled = true;
-                    getAIDescriptionBtn.disabled = true;
+                try {
+                    const fileContent = await file.text();
+                    const demChunksData = parseAndSplitASCIIGridController(fileContent, file.name); 
+                    if (demChunksData && demChunksData.length > 0) {
+                        for (const chunk of demChunksData) { createAndAddTerrain(chunk.name, chunk.parsedData); }
+                        filesProcessedSuccessfully++;
+                    } else { ui.statusMessage.textContent = `Failed to process ${file.name}. Check console.`; }
+                } catch (error) {
+                    console.error(`Error processing file ${file.name}:`, error);
+                    ui.statusMessage.textContent = `Error processing ${file.name}: ${error.message}`;
                 }
-                reader.readAsText(file);
             }
+            ui.loader.style.display = 'none';
+            if (loadedDEMs.length > 0) {
+                 ui.statusMessage.textContent = `${loadedDEMs.length} DEM(s)/chunk(s) loaded. Click on terrain for coordinates.`; centerView(); // Updated status
+            } else if (files.length > 0 && filesProcessedSuccessfully === 0) {
+                 ui.statusMessage.textContent = "No valid DEMs were loaded. Check files or console.";
+            } else {
+                 ui.statusMessage.textContent = "Please load DEM file(s). Click on terrain for coordinates."; // Updated status
+            }
+            ui.fileInput.value = ''; 
         });
 
-        centerViewBtn.addEventListener('click', centerView);
-        materialTypeSelect.addEventListener('change', updateTerrainMaterial);
-        getAIDescriptionBtn.addEventListener('click', getTerrainDescription);
-        closeAIDescriptionBtn.addEventListener('click', () => {
-            aiDescriptionPanel.style.display = 'none';
-        });
+        ui.centerViewBtn.addEventListener('click', centerView);
+        ui.materialTypeSelect.addEventListener('change', updateAllDemMaterials);
+        ui.getAIDescriptionBtn.addEventListener('click', getTerrainDescription);
+        ui.closeAIDescriptionBtn.addEventListener('click', () => { ui.aiDescriptionPanel.style.display = 'none'; });
 
         initThreeJS();
     </script>
