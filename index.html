@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-DEM Viewer (Refactored)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body { margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; }
+        #mainContainer { display: flex; height: calc(100vh - 4rem - 3.5rem); } /* Adjust for header and controls height */
+        #demListPanel { width: 300px; background-color: #374151; padding: 10px; overflow-y: auto; border-right: 1px solid #4b5563; }
+        #demListPanel h3 { font-size: 1.1rem; font-semibold; margin-bottom: 10px; color: white; }
+        #demListPanel ul { list-style: none; padding: 0; }
+        #demListPanel li { background-color: #4b5563; margin-bottom: 8px; padding: 8px; border-radius: 4px; }
+        #demListPanel .dem-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;}
+        #demListPanel li label { color: white; font-size: 0.875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 5px; flex-grow: 1;}
+        #demListPanel li input[type="checkbox"] { accent-color: #3b82f6; width: 1rem; height: 1rem; flex-shrink: 0; margin-right: 8px; }
+        #demListPanel .dem-item-coords { font-size: 0.75rem; color: #d1d5db; padding-left: 2px; margin-bottom: 4px; }
+        #demListPanel .export-btn-small {
+            background-color: #4f46e5; /* indigo-600 */ color: white; font-size: 0.7rem; padding: 2px 6px;
+            border-radius: 3px; border: none; cursor: pointer; margin-left: auto;
+        }
+        #demListPanel .export-btn-small:hover { background-color: #4338ca; /* indigo-700 */ }
+
+        #canvasContainer { flex-grow: 1; height: 100%; position: relative; }
+        canvas { display: block; cursor: crosshair; }
+        .loader {
+            border: 8px solid #f3f3f3; /* Light grey */ border-top: 8px solid #3498db; /* Blue */ border-radius: 50%;
+            width: 60px; height: 60px; animation: spin 1s linear infinite;
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 10; display: none;
+        }
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        #aiDescriptionPanel {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background-color: rgba(42, 50, 62, 0.9); color: white; padding: 15px; border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 20; max-width: 90%; width: 500px;
+            display: none;
+        }
+        #aiDescriptionPanelContent { max-height: 200px; overflow-y: auto; font-size: 0.9rem; line-height: 1.4; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+
+    <div class="flex flex-col h-screen">
+        <header class="bg-gray-800 p-3 shadow-md h-16">
+            <h1 class="text-xl font-semibold text-center">Multi-DEM Viewer</h1>
+        </header>
+
+        <div class="bg-gray-700 p-3 shadow-md flex flex-wrap items-center justify-center gap-2 md:gap-3 h-[3.5rem]">
+            <div>
+                <label for="fileInput" class="text-sm font-medium mr-2">Load DEM(s):</label>
+                <input type="file" id="fileInput" accept=".asc" multiple class="text-sm text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border file:border-gray-500 file:text-sm file:font-semibold file:bg-gray-600 file:text-gray-200 hover:file:bg-gray-500 rounded-md">
+            </div>
+            <button id="centerViewBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>Center View</button>
+            <div>
+                <label for="materialType" class="text-sm font-medium mr-1">Shading:</label>
+                <select id="materialType" class="bg-gray-600 border border-gray-500 text-white text-sm rounded-md p-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50" disabled>
+                    <option value="default">Default</option>
+                    <option value="colorElevation">Color Elev.</option>
+                    <option value="grayElevation">Gray Elev.</option>
+                </select>
+            </div>
+            <button id="getAIDescriptionBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>✨ Describe</button>
+            <button id="exportUnifiedBtn" class="bg-green-600 hover:bg-green-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>Export Visible (GLB)</button>
+        </div>
+
+        <div id="mainContainer">
+            <div id="demListPanel">
+                <h3>Loaded DEMs</h3>
+                <ul id="demList">
+                    </ul>
+            </div>
+            <main class="flex-grow relative bg-gray-800" id="canvasOuterContainer">
+                <div id="canvasContainer">
+                    <div id="loader" class="loader"></div> </div>
+                <div id="statusMessage" class="absolute bottom-2 left-2 bg-gray-900 bg-opacity-75 text-xs p-2 rounded-md">
+                    Please load DEM file(s). Click on terrain for coordinates.
+                </div>
+                <div id="aiDescriptionPanel">
+                    <button id="closeAIDescriptionBtn" class="absolute top-2 right-3 text-gray-300 hover:text-white text-xl font-bold">&times;</button>
+                    <h3 class="text-lg font-semibold mb-2">AI Generated Terrain Description</h3>
+                    <div id="aiDescriptionPanelContent">Loading description...</div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+            "three/addons/exporters/GLTFExporter.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/exporters/GLTFExporter.js"
+        }
+    }
+    </script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
