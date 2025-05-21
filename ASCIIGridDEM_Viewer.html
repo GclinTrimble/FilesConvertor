@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASCII Grid DEM Viewer with AI Description</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body { margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; }
+        #canvasContainer { width: 100%; height: 100%; position: relative; }
+        canvas { display: block; }
+        .loader {
+            border: 8px solid #f3f3f3;
+            border-top: 8px solid #3498db;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        #aiDescriptionPanel {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(42, 50, 62, 0.9); /* bg-gray-800 with opacity */
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            z-index: 20;
+            max-width: 90%;
+            width: 500px; /* Max width for the panel */
+            display: none; /* Hidden by default */
+        }
+        #aiDescriptionPanelContent {
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+
+    <div class="flex flex-col h-screen">
+        <header class="bg-gray-800 p-3 shadow-md">
+            <h1 class="text-xl font-semibold text-center">ASCII Grid DEM Viewer</h1>
+        </header>
+
+        <div class="bg-gray-700 p-3 shadow-md flex flex-wrap items-center justify-center gap-3">
+            <div>
+                <label for="fileInput" class="text-sm font-medium mr-2">Load DEM File (.asc):</label>
+                <input type="file" id="fileInput" accept=".asc" class="text-sm text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border file:border-gray-500 file:text-sm file:font-semibold file:bg-gray-600 file:text-gray-200 hover:file:bg-gray-500 rounded-md">
+            </div>
+            <button id="centerViewBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>Center View</button>
+            <div>
+                <label for="materialType" class="text-sm font-medium mr-2">Shading:</label>
+                <select id="materialType" class="bg-gray-600 border border-gray-500 text-white text-sm rounded-md p-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50" disabled>
+                    <option value="default">Default</option>
+                    <option value="colorElevation">Color by Elevation</option>
+                    <option value="grayElevation">Grayscale by Elevation</option>
+                </select>
+            </div>
+            <button id="getAIDescriptionBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-1 px-3 rounded-md text-sm disabled:opacity-50" disabled>✨ Get Terrain Description</button>
+        </div>
+
+        <main class="flex-grow relative bg-gray-800">
+            <div id="canvasContainer">
+                <div id="loader" class="loader"></div>
+            </div>
+            <div id="statusMessage" class="absolute bottom-2 left-2 bg-gray-900 bg-opacity-75 text-xs p-2 rounded-md">
+                Please load a DEM file.
+            </div>
+            <div id="aiDescriptionPanel">
+                <button id="closeAIDescriptionBtn" class="absolute top-2 right-3 text-gray-300 hover:text-white text-xl font-bold">&times;</button>
+                <h3 class="text-lg font-semibold mb-2">AI Generated Terrain Description</h3>
+                <div id="aiDescriptionPanelContent">Loading description...</div>
+            </div>
+        </main>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, controls;
+        let terrainMesh = null;
+        let demDataGlobal = null; 
+
+        const canvasContainer = document.getElementById('canvasContainer');
+        const fileInput = document.getElementById('fileInput');
+        const centerViewBtn = document.getElementById('centerViewBtn');
+        const materialTypeSelect = document.getElementById('materialType');
+        const statusMessage = document.getElementById('statusMessage');
+        const loader = document.getElementById('loader');
+        const getAIDescriptionBtn = document.getElementById('getAIDescriptionBtn');
+        const aiDescriptionPanel = document.getElementById('aiDescriptionPanel');
+        const aiDescriptionPanelContent = document.getElementById('aiDescriptionPanelContent');
+        const closeAIDescriptionBtn = document.getElementById('closeAIDescriptionBtn');
+
+        // Shader definitions (unchanged)
+        const elevationVertexShader = `
+            varying float vElevation;
+            void main() {
+                vElevation = position.z;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+
+        const colorElevationFragmentShader = `
+            varying float vElevation;
+            uniform float minElevation;
+            uniform float maxElevation;
+            vec3 colorRamp(float t) {
+                vec3 c1 = vec3(0.0, 0.0, 1.0); vec3 c2 = vec3(0.0, 1.0, 0.0);
+                vec3 c3 = vec3(1.0, 1.0, 0.0); vec3 c4 = vec3(1.0, 0.0, 0.0);
+                if (t < 0.0) t = 0.0; if (t > 1.0) t = 1.0;
+                if (t < 0.33) return mix(c1, c2, t / 0.33);
+                if (t < 0.66) return mix(c2, c3, (t - 0.33) / 0.33);
+                return mix(c3, c4, (t - 0.66) / 0.34);
+            }
+            void main() {
+                if (maxElevation == minElevation) {
+                    gl_FragColor = vec4(0.5, 0.5, 0.5, 1.0);
+                } else {
+                    float normalizedElevation = (vElevation - minElevation) / (maxElevation - minElevation);
+                    gl_FragColor = vec4(colorRamp(normalizedElevation), 1.0);
+                }
+            }
+        `;
+        
+        const grayElevationFragmentShader = `
+            varying float vElevation;
+            uniform float minElevation;
+            uniform float maxElevation;
+            void main() {
+                if (maxElevation == minElevation) {
+                    gl_FragColor = vec4(0.5, 0.5, 0.5, 1.0);
+                } else {
+                    float normalizedElevation = (vElevation - minElevation) / (maxElevation - minElevation);
+                    normalizedElevation = clamp(normalizedElevation, 0.0, 1.0);
+                    gl_FragColor = vec4(normalizedElevation, normalizedElevation, normalizedElevation, 1.0);
+                }
+            }
+        `;
+
+        let defaultMaterial, colorElevationMaterial, grayElevationMaterial;
+
+        function initThreeJS() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x2d3748); 
+
+            camera = new THREE.PerspectiveCamera(75, canvasContainer.clientWidth / canvasContainer.clientHeight, 0.1, 50000);
+            camera.position.set(0, 0, 100); 
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+            canvasContainer.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 50, 50);
+            scene.add(directionalLight);
+
+            defaultMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc, flatShading: false });
+            colorElevationMaterial = new THREE.ShaderMaterial({
+                vertexShader: elevationVertexShader, fragmentShader: colorElevationFragmentShader,
+                uniforms: { minElevation: { value: 0.0 }, maxElevation: { value: 100.0 } }
+            });
+            grayElevationMaterial = new THREE.ShaderMaterial({
+                vertexShader: elevationVertexShader, fragmentShader: grayElevationFragmentShader,
+                uniforms: { minElevation: { value: 0.0 }, maxElevation: { value: 100.0 } }
+            });
+
+            animate();
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function onWindowResize() {
+            camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function parseASCIIGrid(fileContent) {
+            // This function remains largely the same as before.
+            // For brevity, I'm not repeating the full code here but it's identical to your provided version.
+            // Ensure it returns { header, data, minElev, maxElev } or null on error.
+            try {
+                const lines = fileContent.split(/\r?\n/);
+                const header = {};
+                let dataStartIndex = 0;
+                const headerKeys = ["ncols", "nrows", "xllcorner", "yllcorner", "cellsize", "nodata_value"];
+                
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue; 
+
+                    const parts = line.split(/\s+/);
+                    if (parts.length >= 2 && headerKeys.includes(parts[0].toLowerCase())) {
+                        header[parts[0].toLowerCase()] = parseFloat(parts[1]);
+                    } else if (Object.keys(header).length >= headerKeys.length-1) { 
+                        if (parts.every(p => !isNaN(parseFloat(p)))) {
+                            dataStartIndex = i;
+                            break;
+                        }
+                    }
+                    if (i > 10 && Object.keys(header).length < 4) { 
+                        throw new Error("Invalid DEM header format.");
+                    }
+                }
+                
+                for (const key of ["ncols", "nrows", "cellsize"]) {
+                    if (typeof header[key] !== 'number' || isNaN(header[key])) {
+                        throw new Error(`Missing or invalid header field: ${key}`);
+                    }
+                }
+                if (typeof header["xllcorner"] !== 'number') header["xllcorner"] = 0;
+                if (typeof header["yllcorner"] !== 'number') header["yllcorner"] = 0;
+                if (typeof header["nodata_value"] !== 'number') header["nodata_value"] = -9999; 
+
+                const ncols = Math.floor(header.ncols);
+                const nrows = Math.floor(header.nrows);
+                const nodata_value = header.nodata_value;
+
+                const elevationData = [];
+                let minElev = Infinity;
+                let maxElev = -Infinity;
+                let validDataPoints = 0;
+
+                for (let i = 0; i < nrows; i++) {
+                    const line = lines[dataStartIndex + i];
+                    if (!line) {
+                        const rowData = new Array(ncols).fill(nodata_value);
+                        elevationData.push(rowData);
+                        continue;
+                    }
+                    const values = line.trim().split(/\s+/).map(parseFloat);
+                    if (values.length !== ncols) {
+                         const correctedValues = new Array(ncols).fill(nodata_value);
+                         for(let k=0; k < Math.min(values.length, ncols); k++) {
+                            correctedValues[k] = values[k];
+                         }
+                         elevationData.push(correctedValues);
+                    } else {
+                        elevationData.push(values);
+                    }
+
+                    for (const val of elevationData[i]) {
+                        if (val !== nodata_value && !isNaN(val)) {
+                            if (val < minElev) minElev = val;
+                            if (val > maxElev) maxElev = val;
+                            validDataPoints++;
+                        }
+                    }
+                }
+                
+                if (validDataPoints === 0) { minElev = 0; maxElev = 0; }
+                if (minElev === Infinity) minElev = nodata_value !== -Infinity ? nodata_value : 0;
+                if (maxElev === -Infinity) maxElev = nodata_value !== Infinity ? nodata_value : 0;
+
+                return { header, data: elevationData, minElev, maxElev };
+            } catch (error) {
+                console.error("Error parsing ASCII Grid file:", error);
+                statusMessage.textContent = `Error parsing file: ${error.message}`;
+                statusMessage.style.color = 'red';
+                return null;
+            }
+        }
+
+        function createTerrain(parsedData) {
+            if (terrainMesh) {
+                scene.remove(terrainMesh);
+                terrainMesh.geometry.dispose();
+            }
+            demDataGlobal = parsedData;
+            const { header, data, minElev, maxElev } = parsedData;
+            const ncols = Math.floor(header.ncols);
+            const nrows = Math.floor(header.nrows);
+            const cellsize = header.cellsize;
+            const nodata_value = header.nodata_value;
+
+            const planeWidth = (ncols - 1) * cellsize;
+            const planeHeight = (nrows - 1) * cellsize;
+            const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight, ncols - 1, nrows - 1);
+            const positions = geometry.attributes.position;
+
+            for (let j = 0; j < nrows; j++) { 
+                for (let i = 0; i < ncols; i++) { 
+                    const vertexIndex = i + j * ncols;
+                    const demRow = (nrows - 1) - j; 
+                    const demCol = i;
+                    let elevation = data[demRow] ? data[demRow][demCol] : nodata_value;
+                    if (elevation === undefined || elevation === null || isNaN(elevation) || elevation === nodata_value) {
+                        elevation = minElev; 
+                    }
+                    if (positions.array.length > vertexIndex * 3 + 2) {
+                         positions.setZ(vertexIndex, elevation);
+                    }
+                }
+            }
+            geometry.computeVertexNormals(); 
+            updateTerrainMaterial(); 
+            terrainMesh = new THREE.Mesh(geometry, defaultMaterial); 
+            terrainMesh.position.set(
+                header.xllcorner + planeWidth / 2,
+                header.yllcorner + planeHeight / 2,
+                0 
+            );
+            scene.add(terrainMesh);
+            statusMessage.textContent = `DEM loaded: ${ncols}x${nrows} cells. Elevation: ${minElev.toFixed(2)} to ${maxElev.toFixed(2)}.`;
+            statusMessage.style.color = 'white';
+            centerViewBtn.disabled = false;
+            materialTypeSelect.disabled = false;
+            getAIDescriptionBtn.disabled = false; // Enable AI button
+        }
+
+        function centerView() {
+            if (!terrainMesh) return;
+            const boundingBox = new THREE.Box3().setFromObject(terrainMesh);
+            const center = boundingBox.getCenter(new THREE.Vector3());
+            const size = boundingBox.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = camera.fov * (Math.PI / 180);
+            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+            cameraZ *= 1.8; 
+            if (size.z > size.x && size.z > size.y) { 
+                 cameraZ = Math.max(cameraZ, size.z * 1.5);
+            }
+            camera.position.set(center.x, center.y - Math.max(size.x,size.y) * 0.7 , center.z + cameraZ);
+            controls.target.copy(center);
+            camera.lookAt(center); 
+            controls.update();
+        }
+        
+        function updateTerrainMaterial() {
+            if (!terrainMesh || !demDataGlobal) return;
+            const type = materialTypeSelect.value;
+            const { minElev, maxElev } = demDataGlobal;
+
+            colorElevationMaterial.uniforms.minElevation.value = minElev;
+            colorElevationMaterial.uniforms.maxElevation.value = maxElev;
+            grayElevationMaterial.uniforms.minElevation.value = minElev;
+            grayElevationMaterial.uniforms.maxElevation.value = maxElev;
+            colorElevationMaterial.needsUpdate = true;
+            grayElevationMaterial.needsUpdate = true;
+
+            switch (type) {
+                case 'colorElevation': terrainMesh.material = colorElevationMaterial; break;
+                case 'grayElevation': terrainMesh.material = grayElevationMaterial; break;
+                default: terrainMesh.material = defaultMaterial; break;
+            }
+            terrainMesh.material.needsUpdate = true;
+        }
+
+        async function getTerrainDescription() {
+            if (!demDataGlobal) {
+                aiDescriptionPanelContent.textContent = "No DEM data loaded to describe.";
+                aiDescriptionPanel.style.display = 'block';
+                return;
+            }
+
+            aiDescriptionPanelContent.innerHTML = '<div class="flex items-center justify-center"><div class="loader-small border-t-purple-500" style="width:20px; height:20px; border-width:3px;"></div><span class="ml-2">Generating description...</span></div>';
+            aiDescriptionPanel.style.display = 'block';
+            getAIDescriptionBtn.disabled = true;
+
+            const { header, minElev, maxElev } = demDataGlobal;
+            const prompt = `You are a helpful assistant. Based on the following Digital Elevation Model (DEM) characteristics, provide a brief, engaging geographical description of the terrain (1-3 sentences).
+- Number of columns (width units): ${header.ncols}
+- Number of rows (height units): ${header.nrows}
+- Cell size (spatial resolution): ${header.cellsize} (map units per cell side)
+- Minimum elevation: ${minElev.toFixed(2)} (map units)
+- Maximum elevation: ${maxElev.toFixed(2)} (map units)
+- Vertical exaggeration is not applied in these values.
+Focus on the general landscape type (e.g., relatively flat, gently rolling, hilly, mountainous, deep valleys, plateaus) and the overall scale of elevation changes. Do not mention the specific numbers unless it's key to the description (e.g. "very high peak"). Be descriptive and evocative.`;
+
+            try {
+                let chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
+                const payload = { contents: chatHistory };
+                const apiKey = ""; // Will be automatically provided by the Canvas environment
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error("Gemini API Error:", errorData);
+                    throw new Error(`API request failed with status ${response.status}: ${errorData.error?.message || 'Unknown error'}`);
+                }
+
+                const result = await response.json();
+
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const text = result.candidates[0].content.parts[0].text;
+                    aiDescriptionPanelContent.textContent = text;
+                } else {
+                    throw new Error("No valid content received from API.");
+                }
+            } catch (error) {
+                console.error("Error fetching terrain description:", error);
+                aiDescriptionPanelContent.textContent = `Error: Could not generate description. ${error.message}`;
+            } finally {
+                getAIDescriptionBtn.disabled = false;
+            }
+        }
+
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                if (!file.name.toLowerCase().endsWith('.asc')) {
+                    statusMessage.textContent = 'Error: Please select a .asc file.';
+                    statusMessage.style.color = 'red';
+                    return;
+                }
+                loader.style.display = 'block';
+                statusMessage.textContent = 'Loading and parsing file...';
+                statusMessage.style.color = 'white';
+                aiDescriptionPanel.style.display = 'none'; // Hide AI panel on new file load
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const parsedData = parseASCIIGrid(e.target.result);
+                        if (parsedData) {
+                            createTerrain(parsedData);
+                            centerView(); 
+                        } else {
+                            // Disable buttons if parsing failed and no terrain is shown
+                            centerViewBtn.disabled = true;
+                            materialTypeSelect.disabled = true;
+                            getAIDescriptionBtn.disabled = true;
+                        }
+                    } catch (error) {
+                        console.error("Error processing file:", error);
+                        statusMessage.textContent = `Error: ${error.message}`;
+                        statusMessage.style.color = 'red';
+                        centerViewBtn.disabled = true;
+                        materialTypeSelect.disabled = true;
+                        getAIDescriptionBtn.disabled = true;
+                    } finally {
+                        loader.style.display = 'none';
+                    }
+                };
+                reader.onerror = () => {
+                    statusMessage.textContent = 'Error reading file.';
+                    statusMessage.style.color = 'red';
+                    loader.style.display = 'none';
+                    centerViewBtn.disabled = true;
+                    materialTypeSelect.disabled = true;
+                    getAIDescriptionBtn.disabled = true;
+                }
+                reader.readAsText(file);
+            }
+        });
+
+        centerViewBtn.addEventListener('click', centerView);
+        materialTypeSelect.addEventListener('change', updateTerrainMaterial);
+        getAIDescriptionBtn.addEventListener('click', getTerrainDescription);
+        closeAIDescriptionBtn.addEventListener('click', () => {
+            aiDescriptionPanel.style.display = 'none';
+        });
+
+        initThreeJS();
+    </script>
+</body>
+</html>

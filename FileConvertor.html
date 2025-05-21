@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DEM ASCII to GLB Converter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .loader {
+            border: 5px solid #f3f3f3; /* Light grey */
+            border-top: 5px solid #3498db; /* Blue */
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg">
+        <h1 class="text-3xl font-bold text-center text-gray-700 mb-8">DEM ASCII to GLB Converter</h1>
+
+        <div class="mb-6">
+            <label for="demFile" class="block mb-2 text-sm font-medium text-gray-900">Select DEM ASCII File (.asc, .txt):</label>
+            <input type="file" id="demFile" accept=".asc,.txt" class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5">
+        </div>
+
+        <button id="convertToGLB" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50">
+            Convert to GLB
+        </button>
+
+        <div id="statusMessage" class="mt-6 text-sm text-gray-700"></div>
+        <div id="loader" class="hidden loader"></div>
+        <a id="downloadLink" class="hidden mt-4 inline-block bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md">Download GLB</a>
+    </div>
+
+    <div class="mt-8 text-center text-xs text-gray-500">
+        <p>Note: Large DEM files may take a significant time to process or cause browser performance issues.</p>
+        <p>Ensure your DEM ASCII file has a standard header (NCOLS, NROWS, XLLCORNER, YLLCORNER, CELLSIZE, NODATA_VALUE).</p>
+        <p>Maximum recommended DEM points: 10 million (e.g., 3162x3162).</p>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+        const demFileInput = document.getElementById('demFile');
+        const convertButton = document.getElementById('convertToGLB');
+        const statusMessage = document.getElementById('statusMessage');
+        const loader = document.getElementById('loader');
+        const downloadLink = document.getElementById('downloadLink');
+        let originalFileName = 'dem_export';
+
+        convertButton.addEventListener('click', async () => {
+            if (!demFileInput.files || demFileInput.files.length === 0) {
+                setStatus('Please select a DEM file first.', 'error');
+                return;
+            }
+
+            const file = demFileInput.files[0];
+            originalFileName = file.name.replace(/\.[^/.]+$/, ""); // Get filename without extension
+            
+            setStatus('Reading file...', 'info');
+            loader.classList.remove('hidden');
+            convertButton.disabled = true;
+            downloadLink.classList.add('hidden');
+
+            try {
+                const fileContent = await readFileContent(file);
+                setStatus('Parsing DEM data...', 'info');
+                const demData = parseDEM(fileContent);
+
+                if (!demData) { // parseDEM will call setStatus on error
+                    loader.classList.add('hidden');
+                    convertButton.disabled = false;
+                    return;
+                }
+                
+                setStatus('Generating 3D mesh...', 'info');
+                // Use requestAnimationFrame to allow UI update before heavy computation
+                requestAnimationFrame(() => {
+                    const mesh = createMeshFromDEM(demData);
+                    if (mesh) {
+                        setStatus('Exporting to GLB...', 'info');
+                        exportGLB(mesh);
+                    }
+                    // createMeshFromDEM or exportGLB might re-enable button / hide loader
+                });
+
+            } catch (error) {
+                console.error("Conversion error:", error);
+                setStatus(`Error: ${error.message}`, 'error');
+                loader.classList.add('hidden');
+                convertButton.disabled = false;
+            }
+        });
+
+        function readFileContent(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (event) => resolve(event.target.result);
+                reader.onerror = (error) => reject(error);
+                reader.readAsText(file);
+            });
+        }
+
+        function parseDEM(asciiData) {
+            const lines = asciiData.split('\n');
+            const header = {};
+            let lineIndex = 0;
+            const requiredHeaders = ['ncols', 'nrows', 'xllcorner', 'yllcorner', 'cellsize', 'nodata_value'];
+            let headersFound = 0;
+
+            // Parse header
+            for (let i = 0; i < lines.length && headersFound < requiredHeaders.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue; 
+
+                const parts = line.split(/\s+/);
+                if (parts.length >= 2) {
+                    const key = parts[0].toLowerCase();
+                    const value = parseFloat(parts[1]);
+                    if (requiredHeaders.includes(key)) {
+                        header[key] = value;
+                        headersFound++;
+                    }
+                }
+                lineIndex = i + 1; 
+                if (headersFound === requiredHeaders.length) break; 
+            }
+            
+            // Validate header
+            for (const reqKey of requiredHeaders) {
+                if (header[reqKey] === undefined || !isFinite(header[reqKey])) {
+                    setStatus(`Error: Missing or invalid header key: ${reqKey.toUpperCase()}. Value: '${header[reqKey]}'. Ensure it's present and a finite numeric value.`, 'error');
+                    return null;
+                }
+                if ((reqKey === 'ncols' || reqKey === 'nrows') && header[reqKey] <= 0) {
+                     setStatus(`Error: ${reqKey.toUpperCase()} must be a positive value. Found: ${header[reqKey]}`, 'error');
+                     return null;
+                }
+                 // Ensure NCOLS and NROWS are integers for practical purposes, though parseFloat is used.
+                if ((reqKey === 'ncols' || reqKey === 'nrows') && !Number.isInteger(header[reqKey])) {
+                    setStatus(`Warning: ${reqKey.toUpperCase()} is not an integer (${header[reqKey]}). Using Math.floor().`, 'info'); // Or 'error' if strict
+                    header[reqKey] = Math.floor(header[reqKey]);
+                     if (header[reqKey] <= 0) { // Re-check after floor
+                        setStatus(`Error: ${reqKey.toUpperCase()} must be a positive integer. After flooring: ${header[reqKey]}`, 'error');
+                        return null;
+                     }
+                }
+            }
+
+            const { ncols, nrows } = header; // nodata_value is used later
+            const values = [];
+            let actualRows = 0;
+            for (let i = lineIndex; i < lines.length && actualRows < nrows; i++) {
+                const line = lines[i].trim();
+                if (!line) continue; 
+
+                const rowValues = line.split(/\s+/).map(valStr => parseFloat(valStr.trim())); // Trim each value string before parsing
+                
+                // Check if any value in the row failed to parse to a finite number
+                for(let k=0; k < rowValues.length; k++){
+                    if(!isFinite(rowValues[k])){
+                        setStatus(`Error: Non-numeric or invalid value found in data row ${actualRows + 1}, column ${k+1}. Value: '${line.split(/\s+/)[k]}'`, 'error');
+                        return null;
+                    }
+                }
+
+                if (rowValues.length !== ncols) {
+                    setStatus(`Error: Data row ${actualRows + 1} has ${rowValues.length} values, expected ${ncols}.`, 'error');
+                    return null;
+                }
+                values.push(rowValues);
+                actualRows++;
+            }
+
+            if (actualRows !== nrows) {
+                setStatus(`Error: Expected ${nrows} data rows, but found ${actualRows}.`, 'error');
+                return null;
+            }
+            
+            header.values = values;
+            return header;
+        }
+
+        function createMeshFromDEM(demData) {
+            setStatus('Creating vertices and faces...', 'info');
+            const { ncols, nrows, xllcorner, yllcorner, cellsize, nodata_value, values } = demData;
+
+            // Sanity check for dimensions to prevent browser freeze / RangeError
+            const MAX_VERTICES = 10 * 1000 * 1000; // Max 10 million vertices (e.g. ~3162x3162)
+                                                 // Each vertex has 3 floats (x,y,z). 10M vertices = 30M floats.
+                                                 // If a float is 4 bytes: 30M * 4 bytes = 120MB for vertex array.
+                                                 // Indices array will also be large.
+
+            if (ncols * nrows > MAX_VERTICES) {
+                setStatus(`Error: DEM dimensions (${ncols}x${nrows} = ${ncols*nrows} points) are too large for browser processing. Maximum allowed is ${MAX_VERTICES.toLocaleString()} points.`, 'error');
+                loader.classList.add('hidden');
+                convertButton.disabled = false;
+                return null;
+            }
+
+            const vertices = [];
+            const indices = [];
+
+            for (let r = 0; r < nrows; r++) { 
+                for (let c = 0; c < ncols; c++) { 
+                    const elevation = values[r][c];
+                    
+                    const vx = xllcorner + c * cellsize;
+                    const vz = yllcorner + (nrows - 1 - r) * cellsize; 
+                    const vy = (elevation === nodata_value) ? 0 : elevation; // Use 0 for NODATA_VALUE in mesh, or adjust as needed
+                                                                            // Note: Original code used nodata_value for vy.
+                                                                            // If nodata_value is extreme, it can skew the model.
+                                                                            // Triangles with these points are skipped anyway.
+                    
+                    vertices.push(vx, vy, vz);
+                }
+            }
+
+            for (let r = 0; r < nrows - 1; r++) {
+                for (let c = 0; c < ncols - 1; c++) {
+                    const z_tl = values[r][c];       
+                    const z_tr = values[r][c+1];     
+                    const z_bl = values[r+1][c];     
+                    const z_br = values[r+1][c+1];   
+
+                    const idx_tl = r * ncols + c;
+                    const idx_tr = r * ncols + (c + 1);
+                    const idx_bl = (r + 1) * ncols + c;
+                    const idx_br = (r + 1) * ncols + (c + 1);
+
+                    if (z_tl !== nodata_value && z_bl !== nodata_value && z_tr !== nodata_value) {
+                        indices.push(idx_tl, idx_bl, idx_tr);
+                    }
+
+                    if (z_tr !== nodata_value && z_bl !== nodata_value && z_br !== nodata_value) {
+                        indices.push(idx_tr, idx_bl, idx_br);
+                    }
+                }
+            }
+            
+            if (indices.length === 0) {
+                setStatus('Error: No valid triangles could be generated. Check NODATA_VALUE, data consistency, or if the DEM is too small/flat.', 'error');
+                loader.classList.add('hidden');
+                convertButton.disabled = false;
+                return null;
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            geometry.setIndex(indices);
+            geometry.computeVertexNormals(); 
+
+            const material = new THREE.MeshStandardMaterial({ 
+                color: 0xaaaaaa, 
+                wireframe: false, 
+                side: THREE.DoubleSide 
+            });
+            
+            const mesh = new THREE.Mesh(geometry, material);
+            return mesh;
+        }
+
+        function exportGLB(mesh) {
+            const exporter = new GLTFExporter();
+            exporter.parse(
+                mesh,
+                (glb) => { 
+                    const blob = new Blob([glb], { type: 'model/gltf-binary' });
+                    downloadLink.href = URL.createObjectURL(blob);
+                    downloadLink.download = `${originalFileName}.glb`;
+                    downloadLink.classList.remove('hidden');
+                    setStatus(`Successfully converted to ${originalFileName}.glb! Click link to download.`, 'success');
+                    loader.classList.add('hidden');
+                    convertButton.disabled = false;
+                },
+                (error) => {
+                    console.error('Error exporting GLB:', error);
+                    setStatus('Error during GLB export: ' + (error.message || error), 'error');
+                    loader.classList.add('hidden');
+                    convertButton.disabled = false;
+                },
+                { binary: true }
+            );
+        }
+
+        function setStatus(message, type = 'info') {
+            statusMessage.textContent = message;
+            statusMessage.classList.remove('text-red-500', 'text-green-500', 'text-gray-700');
+            if (type === 'error') {
+                statusMessage.classList.add('text-red-500');
+            } else if (type === 'success') {
+                statusMessage.classList.add('text-green-500');
+            } else { // info or warning
+                statusMessage.classList.add('text-gray-700');
+            }
+        }
+
+    </script>
+</body>
+</html>
