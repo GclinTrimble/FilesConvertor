@@ -1,105 +1,132 @@
 // js/threeSceneManager.js
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { state } from './appState.js'; // To access loadedDEMs for raycasting, centering
-import { uiElements, setStatusMessage } from './uiManager.js'; // For canvas container and status messages
-import { updateDemMaterial } from './materialManager.js'; // Will create this file next
-
+import { state } from './appState.js'; 
+import { uiElements, setStatusMessage } from './uiManager.js'; 
+// import { updateDemMaterial } from './materialManager.js'; // Not needed here directly
 
 /**
  * @file Manages the Three.js scene, camera, renderer, lighting, controls,
- * and the main animation loop. Also handles mouse interactions on the canvas.
+ * and the main animation loop. Also handles mouse interactions on the canvas and an orientation cube.
  */
 
-// --- Scope-Specific Variables ---
-// These are specific to the Three.js scene management module.
+// --- Main Scene Components ---
 let scene, camera, renderer, controls;
 let directionalLight, ambientLight;
-let raycaster; // For mouse picking
-const pointer = new THREE.Vector2(); // Normalized mouse coordinates
 
-// Temporary vectors for calculations to avoid re-allocation in loops (performance)
+// --- Orientation Cube Components ---
+let cubeScene, cubeCamera, orientationCube;
+const CUBE_SIZE = 50; // Size of the orientation cube in pixels on screen
+const CUBE_MARGIN = 10; // Margin from the corner of the screen
+
+// --- Mouse Interaction & Raycasting ---
+let raycaster; 
+const pointer = new THREE.Vector2(); 
+
+// --- Utility Vectors (reused to avoid allocations) ---
 const lightWorldDirection = new THREE.Vector3();
 const viewSpaceLightDirection = new THREE.Vector3();
 
 /**
- * Initializes the core Three.js components: scene, camera, renderer, controls, and lighting.
+ * Initializes the core Three.js components: main scene, camera, renderer, controls, lighting,
+ * and the secondary scene/camera/mesh for the orientation cube.
  * Also sets up essential event listeners for interactivity on the canvas.
  * @param {HTMLElement} canvasContainerDOM - The HTML element where the canvas will be appended.
  */
 export function initScene(canvasContainerDOM) {
-    // Create the main scene container
+    // --- Main Scene Setup ---
     scene = new THREE.Scene(); 
-    scene.background = new THREE.Color(0x2d3748); // Dark gray background
+    scene.background = new THREE.Color(0x2d3748); 
 
-    // Set up the perspective camera
     camera = new THREE.PerspectiveCamera(
-        75, // Field of View (degrees)
-        canvasContainerDOM.clientWidth / canvasContainerDOM.clientHeight, // Aspect ratio
-        0.1, // Near clipping plane
-        100000 // Far clipping plane (large enough for extensive terrains)
+        75, 
+        canvasContainerDOM.clientWidth / canvasContainerDOM.clientHeight, 
+        0.1, 
+        100000 
     );
-    camera.position.set(0, -200, 200); // Initial camera position (looking somewhat down, Z-up)
-    camera.up.set(0, 0, 1); // IMPORTANT: Define Z-axis as "up" for the camera and OrbitControls
+    camera.position.set(0, -200, 200); 
+    camera.up.set(0, 0, 1); // Z-axis is "up"
 
-    // Set up the WebGL renderer
-    renderer = new THREE.WebGLRenderer({ antialias: true }); // antialias for smoother edges
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); 
     renderer.setSize(canvasContainerDOM.clientWidth, canvasContainerDOM.clientHeight);
-    canvasContainerDOM.appendChild(renderer.domElement); // Add the renderer's <canvas> to the HTML
+    renderer.autoClear = false; // We will manually clear for multi-scene rendering
+    canvasContainerDOM.appendChild(renderer.domElement); 
 
-    // Set up OrbitControls for camera navigation
     controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true; // Makes camera movement smoother
-    controls.dampingFactor = 0.05; // How much damping to apply
-    controls.minPolarAngle = 0; // Allow looking straight down
-    controls.maxPolarAngle = Math.PI * 0.495; // Restrict looking too far up (prevents camera flipping under terrain)
-    // The initial target will be (0,0,0) or updated by centering/mouse interaction.
+    controls.enableDamping = true; 
+    controls.dampingFactor = 0.05;
+    controls.minPolarAngle = 0; 
+    controls.maxPolarAngle = Math.PI * 0.495; 
 
-    // Add lighting
-    ambientLight = new THREE.AmbientLight(0xffffff, 0.7); 
+    ambientLight = new THREE.AmbientLight(0xffffff, 0.8); 
     scene.add(ambientLight);
-    directionalLight = new THREE.DirectionalLight(0xffffff, 0.8); 
-    directionalLight.position.set(50, 50, 50); 
+    directionalLight = new THREE.DirectionalLight(0xffffff, 0.7); 
+    directionalLight.position.set(70, 70, 70); 
     scene.add(directionalLight); 
             
-    raycaster = new THREE.Raycaster(); // Initialize raycaster for mouse picking
+    raycaster = new THREE.Raycaster(); 
 
-    // Attach event listeners for canvas interactivity
+    // --- Orientation Cube Setup ---
+    cubeScene = new THREE.Scene();
+    const aspect = 1; 
+    cubeCamera = new THREE.OrthographicCamera(
+        -CUBE_SIZE / 2 * aspect, CUBE_SIZE / 2 * aspect, 
+        CUBE_SIZE / 2, -CUBE_SIZE / 2, 
+        0.1, 1000
+    );
+    cubeCamera.position.z = 100; 
+    cubeCamera.up.set(0,0,1); 
+
+    const cubeGeometry = new THREE.BoxGeometry(30, 30, 30); 
+    const cubeMaterials = [
+        new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide }), // Right (+X, Red)
+        new THREE.MeshBasicMaterial({ color: 0x800000, side: THREE.DoubleSide }), // Left (-X, Dark Red)
+        new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide }), // Back (+Y, Green)
+        new THREE.MeshBasicMaterial({ color: 0x008000, side: THREE.DoubleSide }), // Front (-Y, Dark Green)
+        new THREE.MeshBasicMaterial({ color: 0x0000ff, side: THREE.DoubleSide }), // Top (+Z, Blue)
+        new THREE.MeshBasicMaterial({ color: 0x000080, side: THREE.DoubleSide })  // Bottom (-Z, Dark Blue)
+    ];
+    orientationCube = new THREE.Mesh(cubeGeometry, cubeMaterials);
+    cubeScene.add(orientationCube);
+    const cubeLight = new THREE.AmbientLight(0xffffff, 1.0);
+    cubeScene.add(cubeLight);
+
     renderer.domElement.addEventListener('click', onCanvasClick, false);
     renderer.domElement.addEventListener('mousemove', onCanvasMouseMove, false);
     renderer.domElement.addEventListener('mousedown', onCanvasMouseDown, false);
     renderer.domElement.addEventListener('wheel', onCanvasWheel, { passive: false });
 
-    window.addEventListener('resize', onWindowResize, false); // Handle window resizing
+    window.addEventListener('resize', onWindowResize, false); 
     
-    animate(); // Start the rendering loop
-    setTimeout(onWindowResize, 0); // Ensure initial canvas size is correct
-    console.log("Three.js scene initialized.");
+    animate(); 
+    setTimeout(onWindowResize, 0); 
+    console.log("Three.js scene and orientation cube initialized.");
 }
 
 /**
- * Handles window resize events. Updates the camera's aspect ratio and the renderer's size.
+ * Handles window resize events. Updates aspect ratios and sizes for both main and cube cameras/renderers.
  */
 function onWindowResize() {
     if (!renderer || !camera || !uiElements.canvasContainer) return; 
-    const newWidth = uiElements.canvasContainer.clientWidth; 
-    const newHeight = uiElements.canvasContainer.clientHeight;
-    if (newWidth > 0 && newHeight > 0) {
-        camera.aspect = newWidth / newHeight;
+    const mainCanvasWidth = uiElements.canvasContainer.clientWidth; 
+    const mainCanvasHeight = uiElements.canvasContainer.clientHeight;
+
+    if (mainCanvasWidth > 0 && mainCanvasHeight > 0) {
+        camera.aspect = mainCanvasWidth / mainCanvasHeight;
         camera.updateProjectionMatrix();
-        renderer.setSize(newWidth, newHeight);
-        console.log("Canvas resized:", newWidth, newHeight);
+        renderer.setSize(mainCanvasWidth, mainCanvasHeight);
+        console.log("Canvas resized:", mainCanvasWidth, mainCanvasHeight);
     }
 }
 
 /**
  * The main animation/rendering loop.
+ * Renders the main scene, then renders the orientation cube in a corner.
  */
 function animate() {
     requestAnimationFrame(animate); 
-    controls.update(); // Required if enableDamping is true
+    controls.update(); // Crucial for damping and applying any programmatic changes to controls or camera
 
-    // Update lighting uniforms for custom shaders
     if (directionalLight && camera && state.loadedDEMs.length > 0) {
         directionalLight.getWorldDirection(lightWorldDirection); 
         lightWorldDirection.negate(); 
@@ -107,20 +134,40 @@ function animate() {
         
         state.loadedDEMs.forEach(demEntry => {
             if (demEntry.isVisible && demEntry.mesh && demEntry.mesh.material instanceof THREE.ShaderMaterial) {
-                if (demEntry.mesh.material.uniforms.uDirectionalLightDirection) {
-                    demEntry.mesh.material.uniforms.uDirectionalLightDirection.value.copy(viewSpaceLightDirection);
+                const uniforms = demEntry.mesh.material.uniforms;
+                if (uniforms && uniforms.uDirectionalLightDirection && uniforms.uDirectionalLightDirection.value instanceof THREE.Vector3) {
+                    uniforms.uDirectionalLightDirection.value.copy(viewSpaceLightDirection);
                 }
-                // Update light color uniforms if they can change dynamically
-                if (demEntry.mesh.material.uniforms.uAmbientLightColor && ambientLight) {
-                     demEntry.mesh.material.uniforms.uAmbientLightColor.value.copy(ambientLight.color).multiplyScalar(ambientLight.intensity);
+                if (uniforms && uniforms.uAmbientLightColor && uniforms.uAmbientLightColor.value instanceof THREE.Color && ambientLight) {
+                     uniforms.uAmbientLightColor.value.copy(ambientLight.color).multiplyScalar(ambientLight.intensity);
                 }
-                 if (demEntry.mesh.material.uniforms.uDirectionalLightColor && directionalLight) {
-                    demEntry.mesh.material.uniforms.uDirectionalLightColor.value.copy(directionalLight.color).multiplyScalar(directionalLight.intensity);
+                 if (uniforms && uniforms.uDirectionalLightColor && uniforms.uDirectionalLightColor.value instanceof THREE.Color && directionalLight) {
+                    uniforms.uDirectionalLightColor.value.copy(directionalLight.color).multiplyScalar(directionalLight.intensity);
                 }
             }
         });
     }
-    renderer.render(scene, camera);
+
+    renderer.clear(); 
+    renderer.setViewport(0, 0, renderer.domElement.width, renderer.domElement.height); 
+    renderer.render(scene, camera); 
+
+    renderer.clearDepth(); 
+
+    const mainCanvasWidth = renderer.domElement.width;
+    const mainCanvasHeight = renderer.domElement.height;
+    renderer.setViewport(
+        mainCanvasWidth - CUBE_SIZE - CUBE_MARGIN, 
+        mainCanvasHeight - CUBE_SIZE - CUBE_MARGIN, 
+        CUBE_SIZE,  
+        CUBE_SIZE   
+    );
+
+    if (orientationCube) {
+        orientationCube.quaternion.copy(camera.quaternion).invert(); 
+    }
+    
+    renderer.render(cubeScene, cubeCamera); 
 }
 
 /**
@@ -160,6 +207,7 @@ function onCanvasMouseDown(event) {
              (event.button === controls.mouseButtons.MIDDLE && controls.enablePan) ||
              (event.button === controls.mouseButtons.RIGHT && controls.enablePan) ) {
             controls.target.copy(state.lastMouseIntersectionPoint);
+            // REMOVED: controls.update(); // Let OrbitControls internal handlers and animate loop handle update.
         }
     }
 }
@@ -171,6 +219,7 @@ function onCanvasMouseDown(event) {
 function onCanvasWheel(event) {
     if (state.lastMouseIntersectionPoint && controls && controls.enableZoom) {
         controls.target.copy(state.lastMouseIntersectionPoint);
+        // REMOVED: controls.update(); // Let OrbitControls internal handlers and animate loop handle update.
     }
 }
 
@@ -211,17 +260,8 @@ export function addMeshToScene(mesh) {
 export function removeMeshFromScene(mesh) {
     if (scene && mesh) {
         scene.remove(mesh);
-        // It's good practice to also dispose of geometry and material if the mesh is permanently removed
-        // and not just hidden, to free up GPU memory. This might be handled elsewhere
-        // when a DEM is fully "deleted" rather than just hidden.
-        // if (mesh.geometry) mesh.geometry.dispose();
-        // if (mesh.material) {
-        //     if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose());
-        //     else mesh.material.dispose();
-        // }
     }
 }
-
 
 /**
  * Centers the camera view to encompass all currently visible DEMs.
@@ -274,37 +314,14 @@ export function centerView() {
     }
     if (!state.lastMouseIntersectionPoint) state.lastMouseIntersectionPoint = new THREE.Vector3();
     state.lastMouseIntersectionPoint.copy(targetPointForSync);
-    // controls.update() will be called by the animate loop
+    // An explicit controls.update() here might be useful if centerView is called
+    // and an immediate visual update is desired without waiting for the next animate frame or user interaction.
+    // However, for now, we rely on the animate loop's update.
+    // If jiggles persist after *this* function, then adding controls.update() here might be the next step.
 }
 
-/**
- * Gets the current scene instance.
- * @returns {THREE.Scene} The Three.js scene.
- */
-export function getScene() {
-    return scene;
-}
-
-/**
- * Gets the current camera instance.
- * @returns {THREE.PerspectiveCamera} The Three.js camera.
- */
-export function getCamera() {
-    return camera;
-}
-
-/**
- * Gets the ambient light instance.
- * @returns {THREE.AmbientLight}
- */
-export function getAmbientLight() {
-    return ambientLight;
-}
-
-/**
- * Gets the directional light instance.
- * @returns {THREE.DirectionalLight}
- */
-export function getDirectionalLight() {
-    return directionalLight;
-}
+// --- Getters for other modules to access scene components if necessary ---
+export function getScene() { return scene; }
+export function getCamera() { return camera; }
+export function getAmbientLight() { return ambientLight; }
+export function getDirectionalLight() { return directionalLight; }
