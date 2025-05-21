@@ -270,7 +270,7 @@
                     const chunkHeader = { ...originalHeader };
                     chunkHeader.ncols = chunkNCols; chunkHeader.nrows = chunkNRows;
                     chunkHeader.xllcorner = originalHeader.xllcorner + (startColOrig * originalHeader.cellsize);
-                    chunkHeader.yllcorner = originalHeader.yllcorner + ((originalHeader.nrows - endRowOrig) * originalHeader.cellsize);
+                    chunkHeader.yllcorner = originalHeader.yllcorner + ((originalHeader.nrows + endRowOrig) * originalHeader.cellsize);
                     const chunkElevationData = []; let chunkMinElev = Infinity; let chunkMaxElev = -Infinity; let chunkValidPoints = 0;
                     for (let r = 0; r < chunkNRows; r++) {
                         const originalRowIndex = startRowOrig + r;
