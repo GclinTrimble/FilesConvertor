@@ -12,6 +12,12 @@ import { getAmbientLight, getDirectionalLight } from './threeSceneManager.js';
  * @file Manages the creation, assignment, and updating of materials for DEM meshes.
  */
 
+// A simple color palette for up to 12 DEMs (extend as needed)
+const REGION_COLOR_PALETTE = [
+    0x1f77b4, 0xff7f0e, 0x2ca02c, 0xd62728, 0x9467bd, 0x8c564b,
+    0xe377c2, 0x7f7f7f, 0xbcbd22, 0x17becf, 0xfec44f, 0x6baed6
+];
+
 /**
  * Updates the material of a specific DEM mesh based on the selected shading type.
  * Creates new shader materials if they don't exist for this DEM yet, or updates existing ones.
@@ -72,6 +78,17 @@ export function updateDemMaterial(demEntry, materialType) {
             }
             targetMaterial = demEntry.materials.gray;
             break;
+        case 'regionColor':
+            // Assign a unique color from a palette to each DEM
+            if (!demEntry.materials.regionColor) {
+                // Use demEntry.regionColor, which should be set when DEM is loaded
+                demEntry.materials.regionColor = new THREE.MeshStandardMaterial({
+                    color: demEntry.regionColor || 0xff00ff, // fallback magenta if not set
+                    flatShading: false
+                });
+            }
+            targetMaterial = demEntry.materials.regionColor;
+            break;
         case 'default':
         default:
             // Ensure the 'default' material exists in the demEntry.materials cache
@@ -104,4 +121,13 @@ export function updateAllDemMaterials() {
     state.loadedDEMs.forEach(dem => {
         updateDemMaterial(dem, state.currentShadingMode);
     });
+}
+
+/**
+ * Assigns a unique region color to each DEM entry from a predefined color palette.
+ * @param {object} demEntry - The DEM entry object from appState.js.
+ * @param {number} index - The index of the DEM entry in the loaded DEMs array.
+ */
+export function assignRegionColorToDem(demEntry, index) {
+    demEntry.regionColor = REGION_COLOR_PALETTE[index % REGION_COLOR_PALETTE.length];
 }

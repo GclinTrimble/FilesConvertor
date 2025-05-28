@@ -198,6 +198,9 @@ function createAndAddTerrainMesh(fileName, parsedData) {
         isVisible: true, 
         fileId: state.fileIdCounter
     };
+    // Assign a unique region color to this DEM (for regionColor mode)
+    const { assignRegionColorToDem } = require('./materialManager.js');
+    assignRegionColorToDem(demEntry, state.loadedDEMs.length);
     demEntry.materials.default = demEntry.mesh.material; 
     demEntry.mesh.userData.demEntry = demEntry; 
     demEntry.mesh.position.set(relativeX, relativeY, 0); 
